@@ -22,8 +22,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  buildRecommendations,
+  buildCareerRecommendations,
   calculateCredits,
+  careerProfiles,
+  defaultRecommendationPreferences,
   calculateGpa,
   getAchievements,
   getLevel,
@@ -32,11 +34,13 @@ import {
   gradeOptions,
   type CourseCategory,
   type CourseRecord,
+  type CareerPath,
   type GradePointSystem,
   type GraduationGoals,
   type LetterGrade,
   type ProjectRecord,
   type ProjectStatus,
+  type RecommendationPreferences,
 } from "@shared/academic";
 
 type View = "dashboard" | "grades" | "credits" | "quest" | "projects" | "badges";
@@ -46,6 +50,8 @@ type QuestData = {
   projects: ProjectRecord[];
   goals: GraduationGoals;
   system: GradePointSystem;
+  careerPath: CareerPath;
+  preferences: RecommendationPreferences;
 };
 
 const STORAGE_KEY = "campus-quest-save-v1";
@@ -54,6 +60,8 @@ const initialGoals: GraduationGoals = { total: 128, required: 60, elective: 42, 
 
 const seedData: QuestData = {
   system: "4.0",
+  careerPath: "frontend",
+  preferences: defaultRecommendationPreferences,
   goals: initialGoals,
   courses: [
     { id: "c1", term: "113-2", name: "程式設計", credits: 3, grade: "A", category: "required" },
@@ -95,6 +103,12 @@ function loadData(): QuestData {
       projects: Array.isArray(parsed.projects) ? parsed.projects : seedData.projects,
       goals: { ...initialGoals, ...(parsed.goals ?? {}) },
       system: parsed.system === "4.3" ? "4.3" : "4.0",
+      careerPath: careerProfiles.some(profile => profile.id === parsed.careerPath) ? parsed.careerPath as CareerPath : "frontend",
+      preferences: {
+        workload: parsed.preferences?.workload === "light" || parsed.preferences?.workload === "ambitious" ? parsed.preferences.workload : defaultRecommendationPreferences.workload,
+        category: parsed.preferences?.category === "required" || parsed.preferences?.category === "elective" || parsed.preferences?.category === "general" ? parsed.preferences.category : defaultRecommendationPreferences.category,
+        projectStyle: parsed.preferences?.projectStyle === "team" || parsed.preferences?.projectStyle === "research" ? parsed.preferences.projectStyle : defaultRecommendationPreferences.projectStyle,
+      },
     };
   } catch {
     return seedData;
@@ -125,6 +139,10 @@ function ProgressBar({ value, tone = "gold" }: { value: number; tone?: "gold" | 
   return <div className={`pixel-progress ${tone === "gold" ? "" : tone}`}><span style={{ width: `${Math.min(100, Math.max(0, value))}%` }} /></div>;
 }
 
+function PreferenceControls({ preferences, onChange }: { preferences: RecommendationPreferences; onChange: (next: RecommendationPreferences) => void }) {
+  return <Panel className="mb-4 overflow-hidden animate-pop-in"><PanelTitle eyebrow="RECOMMENDATION PREFERENCES" title="推薦偏好設定" action={<WandSparkles className="text-[#f4c659]" />} /><div className="grid gap-3 p-4 md:grid-cols-3"><Field label="本學期負荷"><select value={preferences.workload} onChange={event => onChange({ ...preferences, workload: event.target.value as RecommendationPreferences["workload"] })} className="pixel-input w-full px-3 py-2.5"><option value="light">輕量 12–14 學分</option><option value="balanced">平衡 15–18 學分</option><option value="ambitious">挑戰 18+ 學分</option></select></Field><Field label="偏好課程類別"><select value={preferences.category} onChange={event => onChange({ ...preferences, category: event.target.value as RecommendationPreferences["category"] })} className="pixel-input w-full px-3 py-2.5"><option value="any">不限類別</option><option value="required">必修優先</option><option value="elective">選修優先</option><option value="general">通識優先</option></select></Field><Field label="專題取向"><select value={preferences.projectStyle} onChange={event => onChange({ ...preferences, projectStyle: event.target.value as RecommendationPreferences["projectStyle"] })} className="pixel-input w-full px-3 py-2.5"><option value="individual">個人作品集</option><option value="team">團隊協作</option><option value="research">研究／競賽</option></select></Field></div></Panel>;
+}
+
 export default function Home() {
   const [data, setData] = useState<QuestData>(loadData);
   const [activeView, setActiveView] = useState<View>(() => {
@@ -147,7 +165,8 @@ export default function Home() {
   const unlockedAchievements = achievements.filter(achievement => achievement.unlocked);
   const xp = useMemo(() => getXp(data.courses, data.projects), [data.courses, data.projects]);
   const level = useMemo(() => getLevel(xp), [xp]);
-  const recommendations = useMemo(() => buildRecommendations(data.courses, data.goals, data.system), [data.courses, data.goals, data.system]);
+  const recommendationPreferences = data.preferences ?? defaultRecommendationPreferences;
+  const recommendations = useMemo(() => buildCareerRecommendations(data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences), [data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences]);
   const completedProjects = data.projects.filter(project => project.status === "done").length;
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
@@ -271,7 +290,7 @@ export default function Home() {
             {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={setActiveView} />}
             {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} />}
-            {activeView === "quest" && <QuestView recommendations={recommendations} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} />}
+            {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /></>}
             {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
           </div>
@@ -283,7 +302,7 @@ export default function Home() {
   );
 }
 
-function DashboardView({ gpa, data, credits, level, xp, recommendations, termGpas, completedProjects, unlockedAchievements, onGo }: { gpa: number; data: QuestData; credits: ReturnType<typeof calculateCredits>; level: ReturnType<typeof getLevel>; xp: number; recommendations: ReturnType<typeof buildRecommendations>; termGpas: ReturnType<typeof getTermGpas>; completedProjects: number; unlockedAchievements: number; onGo: (view: View) => void }) {
+function DashboardView({ gpa, data, credits, level, xp, recommendations, termGpas, completedProjects, unlockedAchievements, onGo }: { gpa: number; data: QuestData; credits: ReturnType<typeof calculateCredits>; level: ReturnType<typeof getLevel>; xp: number; recommendations: ReturnType<typeof buildCareerRecommendations>; termGpas: ReturnType<typeof getTermGpas>; completedProjects: number; unlockedAchievements: number; onGo: (view: View) => void }) {
   const recent = [...data.courses].sort((a, b) => b.term.localeCompare(a.term, "zh-Hant"))[0];
   return <div className="space-y-4 animate-pop-in">
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,.75fr)]">
@@ -362,9 +381,18 @@ function CreditsView({ credits, goals, showEditor, setShowEditor, onGoalChange }
 }
 function GoalInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#c7d5ec]">{label}</span><input className="pixel-input w-full px-3 py-2.5" type="number" min="0" value={value} onChange={event => onChange(Number(event.target.value))} /></label>; }
 
-function QuestView({ recommendations, goals, gpa, credits, completedProjects }: { recommendations: ReturnType<typeof buildRecommendations>; goals: GraduationGoals; gpa: number; credits: ReturnType<typeof calculateCredits>; completedProjects: number }) {
+function QuestView({ recommendations, goals, gpa, credits, completedProjects }: { recommendations: ReturnType<typeof buildCareerRecommendations>; goals: GraduationGoals; gpa: number; credits: ReturnType<typeof calculateCredits>; completedProjects: number }) {
   const completion = goals.total ? Math.round((credits.total / goals.total) * 100) : 0;
   return <div className="space-y-4 animate-pop-in"><Panel gold className="overflow-hidden"><div className="grid gap-6 p-6 md:grid-cols-[auto_minmax(0,1fr)] md:p-8"><span className="crest mx-auto flex h-20 w-20 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[5px_5px_0_#080d1f] md:mx-0"><WandSparkles size={38} /></span><div><p className="pixel-font text-[9px] leading-6 text-[#a28cff]">AI-STYLE QUEST GUIDE</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">下一學期的智慧任務</h2><p className="mt-4 max-w-3xl text-base leading-8 text-[#d6e0f1]">{recommendations.goal}</p><div className="mt-5 flex flex-wrap gap-2"><span className="border-2 border-[#f4c659] bg-[#4f4222] px-3 py-1.5 text-xs font-black text-[#ffe796]">建議修習 {recommendations.suggestedCredits} 學分</span><span className="border-2 border-[#74e2b1] bg-[#1f4d47] px-3 py-1.5 text-xs font-black text-[#c5f8dd]">目前 GPA {gpa.toFixed(2)}</span><span className="border-2 border-[#aa97ff] bg-[#443a78] px-3 py-1.5 text-xs font-black text-[#ded6ff]">已完成專題 {completedProjects}</span></div></div></div></Panel><div className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="RECOMMENDED QUESTS" title="選課與成長建議" action={<Compass className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#42557d] px-5">{recommendations.suggestions.map((suggestion, index) => <div className="flex gap-4 py-5" key={suggestion}><span className="pixel-font flex h-9 w-9 shrink-0 items-center justify-center border-2 border-[#f4c659] bg-[#5a4923] text-[10px] text-[#fff0a8]">0{index + 1}</span><p className="pt-1 text-sm leading-7 text-[#d5e0f3]">{suggestion}</p></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="CAMPAIGN STATUS" title="冒險節奏" action={<BarChart3 className="text-[#f4c659]" />} /><div className="space-y-5 p-5"><div className="border-2 border-[#526896] bg-[#17243f] p-4"><div className="flex justify-between gap-3"><p className="font-extrabold text-[#fff8df]">畢業主線完成度</p><p className="font-black text-[#f4c659]">{completion}%</p></div><div className="mt-3"><ProgressBar value={completion} /></div><p className="mt-3 text-xs leading-5 text-[#a8bad8]">尚有 {recommendations.remainingCredits} 學分；分配至 {goals.semestersLeft} 個學期可維持穩定節奏。</p></div><div className="border-2 border-[#526896] bg-[#17243f] p-4"><p className="font-extrabold text-[#fff8df]">戰術提醒</p><p className="mt-2 text-sm leading-7 text-[#b7c7e3]">排課時先鎖定必修與有先修門檻的課程，再用通識或選修平衡每週負荷。每學期替作品集留下一個能完成、能展示的任務。</p></div><p className="border-l-4 border-[#aa97ff] pl-3 text-xs leading-6 text-[#c8bfff]">本頁推薦使用目前的 GPA、已修學分、分類缺口與剩餘學期即時計算；它不會替你讀取或傳送外部資料。</p></div></Panel></div></div>;
+}
+
+function CareerQuestView({ recommendations, careerPath, onCareerPathChange, goals, gpa, credits, completedProjects }: { recommendations: ReturnType<typeof buildCareerRecommendations>; careerPath: CareerPath; onCareerPathChange: (path: CareerPath) => void; goals: GraduationGoals; gpa: number; credits: ReturnType<typeof calculateCredits>; completedProjects: number }) {
+  const completion = goals.total ? Math.round((credits.total / goals.total) * 100) : 0;
+  return <div className="space-y-4 animate-pop-in">
+    <Panel gold className="overflow-hidden"><div className="p-5 sm:p-7"><p className="pixel-font text-[9px] leading-6 text-[#a28cff]">CAREER COMPASS ENGINE</p><div className="mt-3 flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between"><div><h2 className="text-2xl font-black text-[#fff8df]">以職涯目標校正下一步</h2><p className="mt-2 max-w-3xl text-sm leading-7 text-[#d6e0f1]">系統會對照已修課程、先修條件、能力缺口、選修學分進度與專題標籤，分出現在可修與仍待解鎖的任務。</p></div><div className="border-2 border-[#a998ff] bg-[#30285f] px-4 py-3"><p className="text-xs font-bold text-[#cfc4ff]">{recommendations.profile.title} 就緒度</p><p className="mt-1 text-2xl font-black text-[#fff0a8]">{recommendations.readiness}%</p></div></div><div className="mt-5 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">{careerProfiles.map(profile => <button key={profile.id} onClick={() => onCareerPathChange(profile.id)} className={`pixel-corners border-2 px-3 py-3 text-left transition-colors ${careerPath === profile.id ? "border-[#f4c659] bg-[#5b4b26] text-[#fff2b0] shadow-[3px_3px_0_#080d1f]" : "border-[#586e99] bg-[#1d2d4c] text-[#c9d8f2] hover:bg-[#2b4165]"}`}><span className="text-sm font-black">{profile.shortTitle}</span><span className="mt-1 block text-xs leading-5 opacity-80">{profile.description}</span></button>)}</div></div></Panel>
+    <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="UNLOCKED COURSE QUESTS" title="現在可修的關鍵課程" action={<BookOpen className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#40557c] px-5">{recommendations.recommendedCourses.map((course, index) => <div key={course.id} className="py-5"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><span className="pixel-font flex h-9 w-9 shrink-0 items-center justify-center border-2 border-[#74e2b1] bg-[#1f4d47] text-[10px] text-[#c9ffde]">0{index + 1}</span><div><p className="font-black text-[#fff8df]">{course.name}</p><p className="mt-1 text-xs leading-5 text-[#afc0dd]">{course.description}</p></div></div><span className="border-2 border-[#f4c659] bg-[#514323] px-2 py-1 text-xs font-black text-[#ffe797]">適配 {course.careerFit[careerPath]}%</span></div><div className="mt-3 flex flex-wrap gap-2 pl-12">{course.skills.map(skill => <span key={skill} className="border border-[#5e739c] bg-[#24375a] px-2 py-1 text-xs font-bold text-[#d6e5ff]">{skill}</span>)}<span className="border border-[#6ee1af] bg-[#1e4d46] px-2 py-1 text-xs font-black text-[#bdf8d7]">可立即修習</span></div></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="ABILITY GAP" title="能力缺口與專題任務" action={<WandSparkles className="text-[#f4c659]" />} /><div className="p-5"><div className="border-2 border-[#536994] bg-[#172640] p-4"><p className="text-xs font-bold text-[#aebfdf]">優先補強能力</p><div className="mt-3 flex flex-wrap gap-2">{recommendations.skillGaps.length ? recommendations.skillGaps.map(skill => <span key={skill} className="border-2 border-[#aa97ff] bg-[#40376f] px-2 py-1 text-xs font-black text-[#ded6ff]">{skill}</span>) : <span className="text-sm font-bold text-[#9af0c3]">核心能力已完整，適合挑戰整合型專題。</span>}</div></div><div className="mt-4 border-2 border-[#f4c659] bg-[#3f3521] p-4"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">PORTFOLIO SIDE QUEST</p><h3 className="mt-2 font-black text-[#fff8df]">{recommendations.projectSuggestion.title}</h3><p className="mt-2 text-sm leading-7 text-[#d3dfef]">{recommendations.projectSuggestion.description}</p><p className="mt-3 border-l-4 border-[#a998ff] pl-3 text-xs leading-6 text-[#d7ccff]">{recommendations.projectSuggestion.rationale}</p><div className="mt-3 flex flex-wrap gap-2">{recommendations.projectSuggestion.skills.map(skill => <span key={skill} className="border border-[#f4c659] px-2 py-1 text-xs font-black text-[#ffe797]">#{skill}</span>)}</div></div></div></Panel></div>
+    <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="PREREQUISITE GATES" title="待解鎖的進階課程" action={<Target className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#40557c] px-5">{recommendations.lockedCourses.map(course => <div key={course.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><p className="font-black text-[#d7e2f6]">{course.name}</p><p className="mt-1 text-xs leading-5 text-[#9eb1d0]">尚缺先修：{course.missingPrerequisites.join("、")}</p></div><span className="inline-flex items-center gap-1 border-2 border-[#677996] bg-[#243451] px-2 py-1 text-xs font-black text-[#c4d2e9]"><CircleHelp size={14} /> 先修未完成</span></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="CAMPAIGN STATUS" title="本學期戰術摘要" action={<BarChart3 className="text-[#f4c659]" />} /><div className="space-y-4 p-5"><SmallMetric label="目前 GPA" value={gpa.toFixed(2)} /><SmallMetric label="畢業主線" value={`${completion}%`} /><SmallMetric label="建議學分節奏" value={`${recommendations.suggestedCredits} 學分／學期`} /><div className="border-l-4 border-[#74e2b1] bg-[#183d3a] p-3 text-xs leading-6 text-[#c5f5dc]">{recommendations.goal}</div><p className="text-xs leading-6 text-[#aebfdd]">已完成專題 {completedProjects} 項；將上方建議專題加入工坊，可持續追蹤作品集成長。</p></div></Panel></div>
+  </div>;
 }
 
 function ProjectsView({ projects, projectForm, editingProjectId, setProjectForm, onOpen, onSave, onCancel, onDelete }: { projects: ProjectRecord[]; projectForm: Omit<ProjectRecord, "id"> | null; editingProjectId: string | null; setProjectForm: React.Dispatch<React.SetStateAction<Omit<ProjectRecord, "id"> | null>>; onOpen: (project?: ProjectRecord) => void; onSave: () => void; onCancel: () => void; onDelete: (id: string) => void }) {

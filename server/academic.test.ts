@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildRecommendations,
+  buildCareerRecommendations,
   calculateCredits,
   calculateGpa,
   getAchievements,
@@ -70,5 +71,21 @@ describe("academic calculations", () => {
     expect(achievements.find(item => item.id === "gpa-elite")?.unlocked).toBe(true);
     expect(achievements.find(item => item.id === "credit-voyager")?.unlocked).toBe(true);
     expect(achievements.find(item => item.id === "project-legend")?.unlocked).toBe(true);
+  });
+
+  it("會依職涯目標、已修課與先修條件排列可修與待解鎖課程", () => {
+    const frontendCourses: CourseRecord[] = [
+      ...courses,
+      { id: "programming", term: "113-1", name: "程式設計", credits: 3, grade: "A", category: "required" },
+    ];
+    const plan = buildCareerRecommendations(frontendCourses, projects, { total: 128, required: 60, elective: 42, general: 26, semestersLeft: 4 }, "4.0", "frontend", { workload: "light", category: "elective", projectStyle: "team" });
+    expect(plan.profile.title).toBe("前端工程師");
+    expect(plan.recommendedCourses[0]?.name).toBe("Web 前端實作");
+    expect(plan.lockedCourses.find(course => course.name === "雲端部署與維運")?.missingPrerequisites).toEqual(["Web 前端實作"]);
+    expect(plan.skillGaps).toContain("React");
+    expect(plan.projectSuggestion.title).toContain("互動校園服務");
+    expect(plan.suggestedCredits).toBe(14);
+    expect(plan.recommendedCourses).toHaveLength(2);
+    expect(plan.projectSuggestion.description).toContain("2–4 人協作");
   });
 });
