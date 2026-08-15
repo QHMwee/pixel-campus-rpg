@@ -5,7 +5,11 @@ import {
   calculateCredits,
   calculateGpa,
   getAchievements,
+  getAcademicSkills,
+  getLevel,
   getTermGpas,
+  getXp,
+  prepareTranscriptImport,
   type CourseRecord,
   type ProjectRecord,
 } from "../shared/academic";
@@ -87,5 +91,37 @@ describe("academic calculations", () => {
     expect(plan.suggestedCredits).toBe(14);
     expect(plan.recommendedCourses).toHaveLength(2);
     expect(plan.projectSuggestion.description).toContain("2–4 人協作");
+  });
+
+  it("能解析成績單、略過重複課程並從匯入課程推導能力標籤", () => {
+    const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別\n114-1,演算法,3,A+,必修\n115-1,統計學,3,88,必修\n115-1,錯誤資料,0,A,選修", courses);
+    expect(preview.toImport).toEqual([{ term: "115-1", name: "統計學", credits: 3, grade: "A", category: "required" }]);
+    expect(preview.duplicates).toHaveLength(1);
+    expect(preview.issues).toHaveLength(1);
+    expect(getAcademicSkills([...courses, ...preview.toImport.map((course, index) => ({ ...course, id: `import-${index}` }))]).map(skill => skill.name)).toEqual(expect.arrayContaining(["統計", "數據判讀"]));
+  });
+
+  it("會依及格門檻與成績權重判定能力熟練度，並以匯入課程推進角色等級", () => {
+    const skillCourses: CourseRecord[] = [
+      { id: "pass", term: "115-1", name: "統計學", credits: 3, grade: "A", category: "required" },
+      { id: "fail", term: "115-1", name: "資料庫系統", credits: 3, grade: "F", category: "elective" },
+    ];
+    const statistics = getAcademicSkills(skillCourses).find(skill => skill.name === "統計");
+    expect(statistics).toMatchObject({ courseCount: 1, points: 2, tier: "proficient" });
+    expect(getAcademicSkills(skillCourses).map(skill => skill.name)).not.toContain("SQL");
+    const levelUpCourses = Array.from({ length: 4 }, (_, index): CourseRecord => ({ id: `import-${index}`, term: "115-1", name: "統計學", credits: 12, grade: "A+", category: "required" }));
+    expect(getXp(levelUpCourses, [])).toBeGreaterThan(900);
+    expect(getLevel(getXp(levelUpCourses, [])).level).toBeGreaterThan(1);
+  });
+
+  it("會將解析整併後的高分成績單課程轉換為能力熟練度與角色升級", () => {
+    const preview = prepareTranscriptImport("學期\t課程名稱\t學分\t成績\t類別\n115-2\t資料分析實作\t12\tA+\t選修", courses);
+    const importedCourses = preview.toImport.map((course, index) => ({ ...course, id: `transcript-${index}` }));
+    const beforeXp = getXp(courses, projects);
+    const afterXp = getXp([...courses, ...importedCourses], projects);
+    expect(preview.issues).toHaveLength(0);
+    expect(afterXp).toBeGreaterThan(beforeXp);
+    expect(getLevel(afterXp).level).toBeGreaterThan(getLevel(beforeXp).level);
+    expect(getAcademicSkills([...courses, ...importedCourses]).find(skill => skill.name === "資料處理")).toMatchObject({ tier: "proficient" });
   });
 });

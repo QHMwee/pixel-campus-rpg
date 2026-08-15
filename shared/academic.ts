@@ -108,6 +108,135 @@ export const courseCatalog: CourseCatalogEntry[] = [
   { id: "research-methods", name: "研究方法", credits: 3, category: "elective", prerequisites: ["統計學"], skills: ["研究方法", "文獻探討", "學術寫作"], careerFit: { frontend: 15, data: 50, product: 45, research: 98 }, description: "從問題、方法到證據，建立完整研究設計。" },
 ];
 
+export type TranscriptIssue = { row: number; message: string; raw: string };
+export type TranscriptImportPreview = {
+  accepted: Omit<CourseRecord, "id">[];
+  toImport: Omit<CourseRecord, "id">[];
+  duplicates: Omit<CourseRecord, "id">[];
+  issues: TranscriptIssue[];
+};
+export type AcademicSkill = { name: string; courseCount: number; points: number; tier: "developing" | "proficient" | "mastered" };
+
+function parseDelimitedRow(line: string, delimiter: string) {
+  const values: string[] = [];
+  let current = "";
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === '"') {
+      if (quoted && line[index + 1] === '"') { current += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (character === delimiter && !quoted) { values.push(current.trim()); current = ""; }
+    else current += character;
+  }
+  values.push(current.trim());
+  return values.map(value => value.replace(/^"|"$/g, "").trim());
+}
+
+function transcriptDelimiter(line: string) { return line.includes("\t") ? "\t" : ","; }
+function headerIndex(value: string) {
+  const normalized = normalize(value).replace(/[\s_\-]/g, "");
+  if (["學期", "term", "semester"].includes(normalized)) return "term";
+  if (["課程名稱", "課名", "course", "coursename", "subject"].includes(normalized)) return "name";
+  if (["學分", "credit", "credits"].includes(normalized)) return "credits";
+  if (["成績", "等第", "grade", "lettergrade"].includes(normalized)) return "grade";
+  if (["類別", "課程類別", "category", "type"].includes(normalized)) return "category";
+  return undefined;
+}
+function transcriptGrade(value: string): LetterGrade | undefined {
+  const normalized = value.trim().toUpperCase().replace("＋", "+").replace("－", "-");
+  if ((gradeOptions as string[]).includes(normalized)) return normalized as LetterGrade;
+  const numeric = Number(normalized);
+  if (!Number.isFinite(numeric)) return undefined;
+  if (numeric >= 90) return "A+";
+  if (numeric >= 85) return "A";
+  if (numeric >= 80) return "A-";
+  if (numeric >= 77) return "B+";
+  if (numeric >= 73) return "B";
+  if (numeric >= 70) return "B-";
+  if (numeric >= 67) return "C+";
+  if (numeric >= 63) return "C";
+  if (numeric >= 60) return "C-";
+  if (numeric >= 50) return "D";
+  return "F";
+}
+function transcriptCategory(value: string | undefined, name: string): CourseCategory {
+  const normalized = normalize(value ?? "");
+  if (["必修", "required", "compulsory"].includes(normalized)) return "required";
+  if (["通識", "general", "liberal"].includes(normalized)) return "general";
+  if (["選修", "elective"].includes(normalized)) return "elective";
+  return courseCatalog.find(course => normalize(course.name) === normalize(name))?.category ?? "elective";
+}
+function courseKey(course: Pick<CourseRecord, "term" | "name">) { return `${normalize(course.term)}::${normalize(course.name)}`; }
+
+/** 解析 CSV 或 TSV 文字；支援標題列或 term,name,credits,grade,category 的固定欄位順序。 */
+export function parseTranscript(text: string) {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const accepted: Omit<CourseRecord, "id">[] = [];
+  const issues: TranscriptIssue[] = [];
+  if (!lines.length) return { accepted, issues: [{ row: 0, message: "請貼上至少一筆成績資料。", raw: "" }] };
+  const delimiter = transcriptDelimiter(lines[0]);
+  const firstRow = parseDelimitedRow(lines[0], delimiter);
+  const mappedHeaders = firstRow.map(headerIndex);
+  const hasHeader = mappedHeaders.some(Boolean);
+  const columns: Record<string, number> = hasHeader
+    ? Object.fromEntries(mappedHeaders.map((key, index) => key ? [key, index] : []).filter((entry): entry is [string, number] => Boolean(entry[0])))
+    : { term: 0, name: 1, credits: 2, grade: 3, category: 4 };
+  const start = hasHeader ? 1 : 0;
+  for (let index = start; index < lines.length; index += 1) {
+    const row = parseDelimitedRow(lines[index], delimiter);
+    const name = row[columns.name] ?? "";
+    const term = row[columns.term] ?? "未指定";
+    const credits = Number(row[columns.credits]);
+    const grade = transcriptGrade(row[columns.grade] ?? "");
+    if (!name.trim() || !Number.isFinite(credits) || credits <= 0 || credits > 12 || !grade) {
+      issues.push({ row: index + 1, raw: lines[index], message: "需要有效的課程名稱、1–12 學分與等第（A+～F 或 0–100 分）。" });
+      continue;
+    }
+    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: transcriptCategory(row[columns.category], name) });
+  }
+  return { accepted, issues };
+}
+
+export function prepareTranscriptImport(text: string, existingCourses: CourseRecord[]): TranscriptImportPreview {
+  const { accepted, issues } = parseTranscript(text);
+  const known = new Set(existingCourses.map(courseKey));
+  const seen = new Set<string>();
+  const toImport: Omit<CourseRecord, "id">[] = [];
+  const duplicates: Omit<CourseRecord, "id">[] = [];
+  accepted.forEach(course => {
+    const key = courseKey(course);
+    if (known.has(key) || seen.has(key)) duplicates.push(course);
+    else { seen.add(key); toImport.push(course); }
+  });
+  return { accepted, toImport, duplicates, issues };
+}
+
+const skillHints: Array<{ match: RegExp; skills: string[] }> = [
+  { match: /程式|演算法|軟體|網站|web/i, skills: ["程式邏輯", "Git"] },
+  { match: /資料|統計|分析|機器學習/i, skills: ["資料處理", "數據判讀"] },
+  { match: /設計|互動|使用者/i, skills: ["UI/UX", "原型"] },
+  { match: /英文|簡報|寫作|溝通/i, skills: ["溝通表達"] },
+];
+
+export function getAcademicSkills(courses: CourseRecord[]): AcademicSkill[] {
+  const counts = new Map<string, { courseCount: number; points: number }>();
+  courses.forEach(course => {
+    const gradePoint = getGradePoint(course.grade, "4.0");
+    if (gradePoint < 2) return;
+    const catalogSkills = courseCatalog.find(item => normalize(item.name) === normalize(course.name))?.skills ?? skillHints.filter(hint => hint.match.test(course.name)).flatMap(hint => hint.skills);
+    const gradeWeight = gradePoint >= 3.7 ? 2 : 1;
+    new Set(catalogSkills).forEach(skill => {
+      const current = counts.get(skill) ?? { courseCount: 0, points: 0 };
+      counts.set(skill, { courseCount: current.courseCount + 1, points: current.points + gradeWeight });
+    });
+  });
+  return Array.from(counts.entries()).map(([name, value]): AcademicSkill => {
+    const tier: AcademicSkill["tier"] = value.points >= 4 ? "mastered" : value.points >= 2 ? "proficient" : "developing";
+    return { name, ...value, tier };
+  }).sort((a, b) => b.points - a.points || b.courseCount - a.courseCount || a.name.localeCompare(b.name, "zh-Hant"));
+}
+
 const gradePoints: Record<GradePointSystem, Record<LetterGrade, number>> = {
   "4.0": {
     "A+": 4,
