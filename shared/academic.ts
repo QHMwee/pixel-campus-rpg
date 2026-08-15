@@ -35,6 +35,60 @@ export type ProjectRecord = {
   status: ProjectStatus;
 };
 
+export type ExamProjectKind = "language" | "programming" | "certification" | "competition";
+
+export type ExamProject = {
+  id: string;
+  name: string;
+  kind: ExamProjectKind;
+  goal: string;
+  description: string;
+  targetDate: string;
+  status: ProjectStatus;
+  source: "notion" | "local";
+  sourceKey?: string;
+  sourceUrl?: string;
+};
+
+export type NotionExamTemplate = Omit<ExamProject, "id"> & { sourceKey: string };
+
+export const notionExamProjectTemplates: NotionExamTemplate[] = [
+  {
+    name: "多益 750 衝刺 65 天計畫",
+    kind: "language",
+    goal: "65 天內由 590 分提升至 750 分",
+    description: "依序完成基礎穩固、閱讀特訓與實戰演練三階段；每日完成情況仍以 Notion 每日進度追蹤為準。",
+    targetDate: "",
+    status: "planning",
+    source: "notion",
+    sourceKey: "notion-toeic-750-65",
+    sourceUrl: "https://app.notion.com/p/3a00b85565a58185b017f9d1055372a1?pvs=204",
+  },
+  {
+    name: "CPE 衝刺計畫",
+    kind: "programming",
+    goal: "穩定通過 2 題，並挑戰 3 題",
+    description: "以每日進度、題目資料庫、演算法筆記與錯題／盲點複習為支援；網站只保留可自行調整的專案摘要。",
+    targetDate: "",
+    status: "planning",
+    source: "notion",
+    sourceKey: "notion-cpe-sprint",
+    sourceUrl: "https://app.notion.com/p/3a40b85565a580b8ae74e973e3ff10e6?pvs=204",
+  },
+];
+
+export function getNotionExamImportCandidates(projects: ExamProject[]) {
+  return notionExamProjectTemplates.filter(template => !projects.some(project => project.sourceKey === template.sourceKey));
+}
+
+export function getExamProjectStats(projects: ExamProject[]) {
+  return {
+    total: projects.length,
+    active: projects.filter(project => project.status === "active").length,
+    done: projects.filter(project => project.status === "done").length,
+  };
+}
+
 export type GraduationGoals = {
   total: number;
   required: number;
@@ -211,6 +265,7 @@ export function createBlankAcademicStart() {
     system: "4.3" as const,
     courses: [] as CourseRecord[],
     projects: [] as ProjectRecord[],
+    examProjects: [] as ExamProject[],
   };
 }
 

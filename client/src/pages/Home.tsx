@@ -43,7 +43,9 @@ import {
   getLevel,
   getCreditPlanStatus,
   getCalendarReadyPlanCourses,
+  getExamProjectStats,
   getExportablePlanCourses,
+  getNotionExamImportCandidates,
   getTermGpas,
   getXp,
   gradeOptions,
@@ -53,6 +55,8 @@ import {
   transcriptFieldLabels,
   type CourseCategory,
   type CourseRecord,
+  type ExamProject,
+  type ExamProjectKind,
   type CareerPath,
   type GradePointSystem,
   type GraduationGoals,
@@ -65,7 +69,7 @@ import {
   type TranscriptFieldMap,
 } from "@shared/academic";
 
-type View = "plan" | "dashboard" | "grades" | "credits" | "quest" | "projects" | "badges";
+type View = "plan" | "dashboard" | "grades" | "credits" | "quest" | "projects" | "exams" | "badges";
 
 type PlannedCourse = {
   id: string;
@@ -79,6 +83,7 @@ type PlannedCourse = {
 type QuestData = {
   courses: CourseRecord[];
   projects: ProjectRecord[];
+  examProjects: ExamProject[];
   goals: GraduationGoals;
   system: GradePointSystem;
   careerPath: CareerPath;
@@ -87,7 +92,7 @@ type QuestData = {
   hasCompletedPlanIntro: boolean;
 };
 
-type AiPlanningSection = Exclude<View, "plan">;
+type AiPlanningSection = "dashboard" | "grades" | "credits" | "quest" | "projects" | "badges";
 type AiPlannerSnapshot = {
   gpa: number;
   gpaSystem: GradePointSystem;
@@ -123,6 +128,7 @@ const categoryLabel: Record<CourseCategory, string> = { required: "必修", elec
 const statusLabel: Record<ProjectStatus, string> = { planning: "籌備中", active: "進行中", done: "已完成" };
 const categoryTone: Record<CourseCategory, string> = { required: "bg-[#f4c659] text-[#18203b]", elective: "bg-[#8ec6ff] text-[#13223d]", general: "bg-[#a9e6ba] text-[#132b29]" };
 const statusTone: Record<ProjectStatus, string> = { planning: "bg-[#687b9e]", active: "bg-[#6c55d9]", done: "bg-[#3b9a74]" };
+const examKindLabel: Record<ExamProjectKind, string> = { language: "語言檢定", programming: "程式能力", certification: "專業證照", competition: "競賽／甄選" };
 
 const navItems: { id: View; label: string; icon: typeof Compass }[] = [
   { id: "plan", label: "課程規劃", icon: BookOpen },
@@ -131,12 +137,20 @@ const navItems: { id: View; label: string; icon: typeof Compass }[] = [
   { id: "credits", label: "學分地圖", icon: Target },
   { id: "quest", label: "智慧任務", icon: WandSparkles },
   { id: "projects", label: "專題工坊", icon: FolderKanban },
+  { id: "exams", label: "證照考試", icon: Trophy },
   { id: "badges", label: "成就圖鑑", icon: Award },
 ];
 
 const emptyCourse = (): Omit<CourseRecord, "id"> => ({ term: "114-2", name: "", credits: 3, grade: "A", category: "required" });
 const emptyProject = (): Omit<ProjectRecord, "id"> => ({ name: "", description: "", tags: [], startDate: "2026-02", endDate: "2026-06", status: "planning" });
+const emptyExamProject = (): Omit<ExamProject, "id"> => ({ name: "", kind: "certification", goal: "", description: "", targetDate: "", status: "planning", source: "local" });
 const emptyPlannedCourse = (): PlannedCourse => ({ id: crypto.randomUUID(), term: "", name: "", credits: 3, category: "required", priority: "must" });
+
+function isExamProject(project: unknown): project is ExamProject {
+  if (!project || typeof project !== "object") return false;
+  const candidate = project as Partial<ExamProject>;
+  return typeof candidate.id === "string" && typeof candidate.name === "string" && typeof candidate.goal === "string" && typeof candidate.description === "string" && typeof candidate.targetDate === "string" && (candidate.kind === "language" || candidate.kind === "programming" || candidate.kind === "certification" || candidate.kind === "competition") && (candidate.status === "planning" || candidate.status === "active" || candidate.status === "done") && (candidate.source === "notion" || candidate.source === "local");
+}
 
 function loadData(): QuestData {
   try {
@@ -146,6 +160,7 @@ function loadData(): QuestData {
     return {
       courses: Array.isArray(parsed.courses) ? parsed.courses.filter(course => !legacyDemoCourseIds.has(course.id)) : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects.filter(project => !legacyDemoProjectIds.has(project.id)) : [],
+      examProjects: Array.isArray(parsed.examProjects) ? parsed.examProjects.filter(isExamProject) : [],
       goals: { ...initialGoals, ...(parsed.goals ?? {}) },
       system: "4.3",
       careerPath: careerProfiles.some(profile => profile.id === parsed.careerPath) ? parsed.careerPath as CareerPath : "frontend",
@@ -244,6 +259,8 @@ export default function Home() {
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
   const [projectForm, setProjectForm] = useState<Omit<ProjectRecord, "id"> | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
+  const [examProjectForm, setExamProjectForm] = useState<Omit<ExamProject, "id"> | null>(null);
+  const [editingExamProjectId, setEditingExamProjectId] = useState<string | null>(null);
   const [showGoalEditor, setShowGoalEditor] = useState(false);
   const [celebration, setCelebration] = useState<{ title: string; description: string; icon: string } | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -282,6 +299,8 @@ export default function Home() {
   const recommendationPreferences = data.preferences ?? defaultRecommendationPreferences;
   const recommendations = useMemo(() => buildCareerRecommendations(data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences, data.plannedCourses.map(course => course.name)), [data.courses, data.projects, data.goals, data.system, data.careerPath, data.plannedCourses, recommendationPreferences]);
   const completedProjects = data.projects.filter(project => project.status === "done").length;
+  const examProjectStats = useMemo(() => getExamProjectStats(data.examProjects), [data.examProjects]);
+  const notionExamCandidates = useMemo(() => getNotionExamImportCandidates(data.examProjects), [data.examProjects]);
   const plannedCreditBreakdown = useMemo(() => calculatePlannedCredits(data.plannedCourses), [data.plannedCourses]);
   const plannedCredits = plannedCreditBreakdown.total;
   const plannedRequiredCredits = plannedCreditBreakdown.required;
@@ -327,6 +346,7 @@ export default function Home() {
       setActiveView("plan");
       setCourseForm(null);
       setProjectForm(null);
+      setExamProjectForm(null);
     }
   }
 
@@ -390,6 +410,23 @@ export default function Home() {
     setEditingProjectId(null);
   }
 
+  function saveExamProject() {
+    if (!examProjectForm || !examProjectForm.name.trim() || !examProjectForm.goal.trim()) return;
+    setData(current => ({
+      ...current,
+      examProjects: editingExamProjectId
+        ? current.examProjects.map(project => project.id === editingExamProjectId ? { ...examProjectForm, id: editingExamProjectId, name: examProjectForm.name.trim(), goal: examProjectForm.goal.trim(), description: examProjectForm.description.trim() } : project)
+        : [...current.examProjects, { ...examProjectForm, id: crypto.randomUUID(), name: examProjectForm.name.trim(), goal: examProjectForm.goal.trim(), description: examProjectForm.description.trim() }],
+    }));
+    setExamProjectForm(null);
+    setEditingExamProjectId(null);
+  }
+
+  function importNotionExamProjects() {
+    if (!notionExamCandidates.length) return;
+    setData(current => ({ ...current, examProjects: [...current.examProjects, ...notionExamCandidates.map(project => ({ ...project, id: crypto.randomUUID() }))] }));
+  }
+
   function openCourseEditor(course?: CourseRecord) {
     setEditingCourseId(course?.id ?? null);
     setCourseForm(course ? { term: course.term, name: course.name, credits: course.credits, grade: course.grade, category: course.category } : emptyCourse());
@@ -398,6 +435,11 @@ export default function Home() {
   function openProjectEditor(project?: ProjectRecord) {
     setEditingProjectId(project?.id ?? null);
     setProjectForm(project ? { name: project.name, description: project.description, tags: project.tags, startDate: project.startDate, endDate: project.endDate, status: project.status } : emptyProject());
+  }
+
+  function openExamProjectEditor(project?: ExamProject) {
+    setEditingExamProjectId(project?.id ?? null);
+    setExamProjectForm(project ? { name: project.name, kind: project.kind, goal: project.goal, description: project.description, targetDate: project.targetDate, status: project.status, source: project.source, sourceKey: project.sourceKey, sourceUrl: project.sourceUrl } : emptyExamProject());
   }
 
   function updateGoals(key: keyof GraduationGoals, value: number) {
@@ -522,6 +564,12 @@ export default function Home() {
               <p className="pixel-font text-[8px] leading-5 text-[#93a7cb]">GAME SYSTEM</p>
               <button onClick={resetQuest} className="mt-2 text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#f4c659]">清除本機資料，重新開始</button>
             </div>
+            <div className="mt-4 border-t-2 border-[#4b628e] px-3 pt-4">
+              <p className="pixel-font text-[8px] leading-5 text-[#74e2b1]">MOBILE APP MODE</p>
+              <p className="mt-2 text-xs font-bold leading-5 text-[#dce7ff]">可安裝到手機主畫面，之後像 App 一樣直接開啟。</p>
+              <p className="mt-2 text-[11px] leading-5 text-[#9fb1d0]">Android：Chrome 選單 →「安裝應用程式」。iPhone：分享 →「加入主畫面」。</p>
+              <a href="/manus-storage/app-debug_294ac8be.apk" download className="mt-3 inline-flex items-center border-2 border-[#74e2b1] bg-[#173a39] px-2 py-1 text-[10px] font-bold text-[#d8fff0] hover:bg-[#245d58]">下載 Android APK</a>
+            </div>
           </aside>
 
           <div className="min-w-0">
@@ -539,8 +587,9 @@ export default function Home() {
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /></>}
             {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
+            {activeView === "exams" && <ExamProjectsView projects={data.examProjects} stats={examProjectStats} notionCandidateCount={notionExamCandidates.length} form={examProjectForm} editingProjectId={editingExamProjectId} setForm={setExamProjectForm} onOpen={openExamProjectEditor} onSave={saveExamProject} onCancel={() => { setExamProjectForm(null); setEditingExamProjectId(null); }} onImportNotion={importNotionExamProjects} onDelete={id => setData(current => ({ ...current, examProjects: current.examProjects.filter(project => project.id !== id) }))} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
-            <AiPlannerPanel section={activeView === "plan" ? "dashboard" : activeView} snapshot={aiSnapshot} />
+            <AiPlannerPanel section={activeView === "plan" || activeView === "exams" ? "dashboard" : activeView} snapshot={aiSnapshot} />
           </div>
         </div>
       </div>
@@ -568,7 +617,7 @@ function FourYearRoadmapPanel({ data, credits, onGo }: { data: QuestData; credit
     { title: "課程與學分", source: "Notion：課程管理", detail: data.plannedCourses.length ? `已規劃 ${data.plannedCourses.length} 門課、${plannedCredits} 學分；已完成 ${credits.total} 學分。${coursePreview ? `目前安排：${coursePreview}。` : ""}` : "Notion 的課程資料尚未建立實際項目；先從下一學期的一門課開始。", action: "前往課程規劃", view: "plan" as View, tone: "border-[#f4c659] bg-[#493e26]" },
     { title: "能力補強", source: "Notion：長期計畫與補強", detail: "以數學基礎與電類背景為補強主線，將大目標拆成能完成的小單位。", action: "整理智慧任務", view: "quest" as View, tone: "border-[#a998ff] bg-[#342e65]" },
     { title: "專題與實務", source: "Notion：實務專題系統", detail: data.projects.length ? `目前有 ${data.projects.length} 個本機專題紀錄；把每一段探索留下可回看的脈絡。` : "專題資料目前尚未建立。從一個想解決的小問題開始，之後再補上階段與成果。", action: "開啟專題工坊", view: "projects" as View, tone: "border-[#74e2b1] bg-[#1e463f]" },
-    { title: "證照與里程碑", source: "Notion：證照、競賽與時間軸", detail: "目前尚未建立實際里程碑。可先把多益 550+、核心選修與實習學分化成自己的時間節點。", action: "檢查學分目標", view: "credits" as View, tone: "border-[#8ec6ff] bg-[#213f62]" },
+    { title: "證照與考試", source: "Notion：多益與 CPE 計畫", detail: data.examProjects.length ? `目前有 ${data.examProjects.length} 個本機證照／考試專案，其中 ${data.examProjects.filter(project => project.status === "done").length} 個已完成。可隨時編輯或刪除，不會改動 Notion 原始資料。` : "可把 Notion 的多益與 CPE 計畫帶入成可刪除的本機專案，也能自行建立其他證照目標。", action: "管理證照考試", view: "exams" as View, tone: "border-[#8ec6ff] bg-[#213f62]" },
   ];
   const stages = [
     ["第一段", "基礎與探索", "用課程規劃安排必修與想嘗試的領域，找出需要優先補強的基礎。"],
@@ -687,6 +736,14 @@ function CareerQuestView({ recommendations, careerPath, onCareerPathChange, goal
     <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="UNLOCKED COURSE QUESTS" title="現在可修的關鍵課程" action={<BookOpen className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#40557c] px-5">{recommendations.recommendedCourses.map((course, index) => <div key={course.id} className="py-5"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><span className="pixel-font flex h-9 w-9 shrink-0 items-center justify-center border-2 border-[#74e2b1] bg-[#1f4d47] text-[10px] text-[#c9ffde]">0{index + 1}</span><div><p className="font-black text-[#fff8df]">{course.name}</p><p className="mt-1 text-xs leading-5 text-[#afc0dd]">{course.description}</p></div></div><span className="border-2 border-[#f4c659] bg-[#514323] px-2 py-1 text-xs font-black text-[#ffe797]">適配 {course.careerFit[careerPath]}%</span></div><div className="mt-3 flex flex-wrap gap-2 pl-12">{course.skills.map(skill => <span key={skill} className="border border-[#5e739c] bg-[#24375a] px-2 py-1 text-xs font-bold text-[#d6e5ff]">{skill}</span>)}<span className="border border-[#6ee1af] bg-[#1e4d46] px-2 py-1 text-xs font-black text-[#bdf8d7]">可立即修習</span></div></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="ABILITY GAP" title="能力缺口與專題任務" action={<WandSparkles className="text-[#f4c659]" />} /><div className="p-5"><div className="border-2 border-[#536994] bg-[#172640] p-4"><p className="text-xs font-bold text-[#aebfdf]">優先補強能力</p><div className="mt-3 flex flex-wrap gap-2">{recommendations.skillGaps.length ? recommendations.skillGaps.map(skill => <span key={skill} className="border-2 border-[#aa97ff] bg-[#40376f] px-2 py-1 text-xs font-black text-[#ded6ff]">{skill}</span>) : <span className="text-sm font-bold text-[#9af0c3]">核心能力已完整，適合挑戰整合型專題。</span>}</div></div><div className="mt-4 border-2 border-[#f4c659] bg-[#3f3521] p-4"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">PORTFOLIO SIDE QUEST</p><h3 className="mt-2 font-black text-[#fff8df]">{recommendations.projectSuggestion.title}</h3><p className="mt-2 text-sm leading-7 text-[#d3dfef]">{recommendations.projectSuggestion.description}</p><p className="mt-3 border-l-4 border-[#a998ff] pl-3 text-xs leading-6 text-[#d7ccff]">{recommendations.projectSuggestion.rationale}</p><div className="mt-3 flex flex-wrap gap-2">{recommendations.projectSuggestion.skills.map(skill => <span key={skill} className="border border-[#f4c659] px-2 py-1 text-xs font-black text-[#ffe797]">#{skill}</span>)}</div></div></div></Panel></div>
     <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="PREREQUISITE GATES" title="待解鎖的進階課程" action={<Target className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#40557c] px-5">{recommendations.lockedCourses.map(course => <div key={course.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><p className="font-black text-[#d7e2f6]">{course.name}</p><p className="mt-1 text-xs leading-5 text-[#9eb1d0]">尚缺先修：{course.missingPrerequisites.join("、")}</p></div><span className="inline-flex items-center gap-1 border-2 border-[#677996] bg-[#243451] px-2 py-1 text-xs font-black text-[#c4d2e9]"><CircleHelp size={14} /> 先修未完成</span></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="CAMPAIGN STATUS" title="本學期戰術摘要" action={<BarChart3 className="text-[#f4c659]" />} /><div className="space-y-4 p-5"><SmallMetric label="目前 GPA" value={gpa.toFixed(2)} /><SmallMetric label="畢業主線" value={`${completion}%`} /><SmallMetric label="建議學分節奏" value={`${recommendations.suggestedCredits} 學分／學期`} /><div className="border-l-4 border-[#74e2b1] bg-[#183d3a] p-3 text-xs leading-6 text-[#c5f5dc]">{recommendations.goal}</div><p className="text-xs leading-6 text-[#aebfdd]">已完成專題 {completedProjects} 項；將上方建議專題加入工坊，可持續追蹤作品集成長。</p></div></Panel></div>
   </div>;
+}
+
+function ExamProjectsView({ projects, stats, notionCandidateCount, form, editingProjectId, setForm, onOpen, onSave, onCancel, onImportNotion, onDelete }: { projects: ExamProject[]; stats: ReturnType<typeof getExamProjectStats>; notionCandidateCount: number; form: Omit<ExamProject, "id"> | null; editingProjectId: string | null; setForm: React.Dispatch<React.SetStateAction<Omit<ExamProject, "id"> | null>>; onOpen: (project?: ExamProject) => void; onSave: () => void; onCancel: () => void; onImportNotion: () => void; onDelete: (id: string) => void }) {
+  return <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_400px] animate-pop-in"><div className="space-y-4"><Panel gold className="overflow-hidden"><div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[auto_minmax(0,1fr)]"><span className="crest mx-auto flex h-16 w-16 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[4px_4px_0_#080d1f] lg:mx-0"><Trophy size={30} /></span><div><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">EXAM & CERTIFICATION PROJECTS</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">把考試計畫，變成可掌握的專案</h2><p className="mt-3 max-w-3xl text-sm leading-7 text-[#c9d7ee]">可把 Notion 的多益與 CPE 計畫帶入這裡，之後再依自己的節奏調整、完成或刪除。這些是本機副本；刪除不會影響 Notion 原始頁面、每日進度或題庫。</p></div></div></Panel><div className="grid gap-4 sm:grid-cols-3"><SmallMetric label="考試專案" value={`${stats.total}`} /><SmallMetric label="正在推進" value={`${stats.active}`} /><SmallMetric label="已完成" value={`${stats.done}`} /></div><Panel className="overflow-hidden"><PanelTitle eyebrow="NOTION PLAN IMPORT" title="帶入已確認的考試計畫" action={<PixelButton disabled={!notionCandidateCount} onClick={onImportNotion} className="bg-[#8ec6ff] text-[#162a4c] disabled:cursor-not-allowed disabled:opacity-50"><Download size={16} /> 帶入 {notionCandidateCount} 項</PixelButton>} /><div className="p-5"><p className="text-sm leading-7 text-[#c5d3ea]">目前可帶入兩份已核對的 Notion 摘要：多益 750 衝刺 65 天計畫與 CPE 衝刺計畫。相同來源只會帶入一次；之後的編輯與刪除都只作用在這台裝置。</p>{!notionCandidateCount && <p className="mt-3 border-l-4 border-[#74e2b1] bg-[#1b433f] px-3 py-2 text-xs leading-5 text-[#d2f8e3]">已帶入所有可用的 Notion 考試計畫。你仍可新增自己的證照或競賽目標。</p>}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="PERSONAL EXAM BOARD" title="我的證照與考試專案" action={<PixelButton onClick={() => onOpen()} className="bg-[#f4c659] text-[#152544]"><Plus size={16} /> 新增專案</PixelButton>} /><div className="p-5">{projects.length === 0 ? <EmptyState icon={<Trophy />} title="先帶入或新增一個考試目標" detail="多益與 CPE 可以從 Notion 計畫建立本機副本，也可以從自己的下一張證照開始。" action={() => onOpen()} /> : <div className="grid gap-4 md:grid-cols-2">{[...projects].sort((a, b) => a.name.localeCompare(b.name, "zh-Hant")).map(project => <article key={project.id} className="border-3 border-[#536994] bg-[#172640] shadow-[3px_3px_0_#080d1f]"><div className="flex items-start justify-between gap-3 border-b-2 border-[#435a82] p-4"><div><div className="flex flex-wrap gap-2"><span className={`inline-flex px-2 py-1 text-xs font-black text-white ${statusTone[project.status]}`}>{statusLabel[project.status]}</span><span className="border border-[#6b82ad] bg-[#263a5d] px-2 py-1 text-xs font-black text-[#d8e6ff]">{examKindLabel[project.kind]}</span></div><h3 className="mt-3 text-lg font-black text-[#fff8df]">{project.name}</h3></div><div className="flex gap-1"><button onClick={() => onOpen(project)} className="p-1.5 text-[#b9c9e6] hover:text-[#f4c659]" aria-label={`編輯 ${project.name}`}><Pencil size={16} /></button><button onClick={() => window.confirm(`確定刪除「${project.name}」嗎？這只會刪除本機副本。`) && onDelete(project.id)} className="p-1.5 text-[#b9c9e6] hover:text-[#f28682]" aria-label={`刪除 ${project.name}`}><Trash2 size={16} /></button></div></div><div className="space-y-3 p-4"><p className="text-xs font-black text-[#f4c659]">目標：{project.goal}</p><p className="min-h-12 text-sm leading-7 text-[#c0d0e9]">{project.description || "尚未填寫專案說明。"}</p><div className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-[#3e557d] pt-3 text-xs font-bold text-[#a9bad8]"><span>{project.targetDate ? `目標日期：${project.targetDate}` : "尚未設定目標日期"}</span>{project.sourceUrl && <a href={project.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#8ec6ff] hover:text-[#d7ecff]">查看 Notion 計畫 <ChevronRight size={13} /></a>}</div><p className="text-[11px] text-[#8fa3c7]">{project.source === "notion" ? "Notion 計畫的本機可刪除副本" : "這台裝置建立的個人專案"}</p></div></article>)}</div>}</div></Panel></div><ExamProjectEditor form={form} editing={Boolean(editingProjectId)} setForm={setForm} onSave={onSave} onCancel={onCancel} /></div>;
+}
+
+function ExamProjectEditor({ form, editing, setForm, onSave, onCancel }: { form: Omit<ExamProject, "id"> | null; editing: boolean; setForm: React.Dispatch<React.SetStateAction<Omit<ExamProject, "id"> | null>>; onSave: () => void; onCancel: () => void }) {
+  return <Panel className="h-fit overflow-hidden"><PanelTitle eyebrow="EXAM PROJECT EDITOR" title={editing ? "調整考試專案" : "新增考試專案"} action={<Target className="text-[#f4c659]" />} /><div className="p-5">{!form ? <p className="text-sm leading-7 text-[#aec0dd]">從左側挑選一個專案來編輯，或新增自己的證照與考試目標。</p> : <div className="space-y-4"><Field label="專案名稱"><input value={form.name} onChange={event => setForm(current => current ? { ...current, name: event.target.value } : current)} placeholder="例如：CPE 秋季檢定" className="pixel-input w-full px-3 py-2.5" /></Field><Field label="類型"><select value={form.kind} onChange={event => setForm(current => current ? { ...current, kind: event.target.value as ExamProjectKind } : current)} className="pixel-input w-full px-3 py-2.5">{Object.entries(examKindLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="目標"><input value={form.goal} onChange={event => setForm(current => current ? { ...current, goal: event.target.value } : current)} placeholder="例如：通過 2 題、挑戰 3 題" className="pixel-input w-full px-3 py-2.5" /></Field><Field label="目標日期（可留空）"><input type="date" value={form.targetDate} onChange={event => setForm(current => current ? { ...current, targetDate: event.target.value } : current)} className="pixel-input w-full px-3 py-2.5" /></Field><Field label="目前狀態"><select value={form.status} onChange={event => setForm(current => current ? { ...current, status: event.target.value as ProjectStatus } : current)} className="pixel-input w-full px-3 py-2.5">{Object.entries(statusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="備註"><textarea value={form.description} onChange={event => setForm(current => current ? { ...current, description: event.target.value } : current)} placeholder="記下這一階段最重要的練習或提醒" className="pixel-input min-h-28 w-full px-3 py-2.5" /></Field><div className="flex gap-3 pt-2"><PixelButton onClick={onSave} className="flex-1 bg-[#f4c659] text-[#152544]">{editing ? "儲存調整" : "建立專案"}</PixelButton><PixelButton onClick={onCancel} className="flex-1">取消</PixelButton></div><p className="text-xs leading-5 text-[#91a5c7]">若此專案源自 Notion，儲存只會修改這個網站的本機副本，不會回寫原始頁面。</p></div>}</div></Panel>;
 }
 
 function ProjectsView({ projects, projectForm, editingProjectId, setProjectForm, onOpen, onSave, onCancel, onDelete }: { projects: ProjectRecord[]; projectForm: Omit<ProjectRecord, "id"> | null; editingProjectId: string | null; setProjectForm: React.Dispatch<React.SetStateAction<Omit<ProjectRecord, "id"> | null>>; onOpen: (project?: ProjectRecord) => void; onSave: () => void; onCancel: () => void; onDelete: (id: string) => void }) {

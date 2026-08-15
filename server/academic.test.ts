@@ -10,7 +10,9 @@ import {
   calculateGpa,
   createBlankAcademicStart,
   getCreditPlanStatus,
+  getExamProjectStats,
   getCalendarReadyPlanCourses,
+  getNotionExamImportCandidates,
   getAchievements,
   getAcademicSkills,
   getGradePoint,
@@ -195,7 +197,7 @@ describe("academic calculations", () => {
   });
 
   it("空白起始不含示範資料、固定使用 4.3 制，並導向課程規劃頁", () => {
-    expect(createBlankAcademicStart()).toEqual({ system: "4.3", courses: [], projects: [] });
+    expect(createBlankAcademicStart()).toEqual({ system: "4.3", courses: [], projects: [], examProjects: [] });
     expect(resolveInitialAcademicView("", false, ["plan", "dashboard"])).toBe("plan");
     expect(resolveInitialAcademicView("", true, ["plan", "dashboard"])).toBe("dashboard");
     expect(resolveInitialAcademicView("dashboard", false, ["plan", "dashboard"])).toBe("dashboard");
@@ -252,5 +254,16 @@ describe("academic calculations", () => {
     expect(csv).toContain('"cq:plan-notion"');
     expect(csv).toContain('"2026-08-01"');
     expect(csv).toContain('"規劃中"');
+  });
+
+  it("會提供多益與 CPE 的 Notion 證照專案範本，並以來源鍵避免重複帶入", () => {
+    const candidates = getNotionExamImportCandidates([]);
+    expect(candidates.map(project => project.name)).toEqual(["多益 750 衝刺 65 天計畫", "CPE 衝刺計畫"]);
+    expect(candidates[0]?.goal).toContain("590");
+    expect(candidates[1]?.goal).toContain("2 題");
+
+    const imported = [{ ...candidates[0], id: "exam-1" }];
+    expect(getNotionExamImportCandidates(imported)).toHaveLength(1);
+    expect(getExamProjectStats([...imported, { ...candidates[1], id: "exam-2", status: "done" }])).toEqual({ total: 2, active: 0, done: 1 });
   });
 });
