@@ -124,6 +124,79 @@ export type TranscriptImportPreview = {
 };
 export type AcademicSkill = { name: string; courseCount: number; points: number; tier: "developing" | "proficient" | "mastered" };
 
+export type CoursePlanExportEntry = {
+  id: string;
+  term: string;
+  name: string;
+  credits: number;
+  category: CourseCategory;
+  priority: "must" | "important" | "explore";
+};
+
+const planCategoryLabels: Record<CourseCategory, string> = { required: "必修", elective: "選修", general: "通識" };
+const planPriorityLabels: Record<CoursePlanExportEntry["priority"], string> = { must: "一定要修", important: "很想安排", explore: "還在考慮" };
+
+export function getExportablePlanCourses(courses: CoursePlanExportEntry[]) {
+  return courses.filter(course => Boolean(course.name.trim() && course.term.trim() && Number.isFinite(course.credits) && course.credits > 0 && course.credits <= 12));
+}
+
+function escapeCsvCell(value: string | number) {
+  const text = String(value).replace(/\r?\n/g, " ");
+  const formulaSafe = /^[=+\-@]/.test(text) ? `'${text}` : text;
+  return `"${formulaSafe.replace(/"/g, '""')}"`;
+}
+
+export function buildCoursePlanCsv(courses: CoursePlanExportEntry[]) {
+  const header = ["預計學期", "課程名稱", "學分", "類別", "優先程度"];
+  const rows = getExportablePlanCourses(courses).map(course => [course.term.trim(), course.name.trim(), course.credits, planCategoryLabels[course.category], planPriorityLabels[course.priority]]);
+  return `\uFEFF${[header, ...rows].map(row => row.map(escapeCsvCell).join(",")).join("\r\n")}\r\n`;
+}
+
+function getPlanDate(term: string) {
+  const matched = term.trim().match(/^(\d{3,4})\s*[-/]\s*([12])$/);
+  if (!matched) return null;
+  const academicYear = Number(matched[1]);
+  const semester = Number(matched[2]);
+  const gregorianYear = academicYear < 1000 ? academicYear + 1911 : academicYear;
+  return new Date(Date.UTC(semester === 1 ? gregorianYear : gregorianYear + 1, semester === 1 ? 7 : 1, 1));
+}
+
+function formatIcsDate(date: Date) {
+  return `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`;
+}
+
+function formatIcsTimestamp(date: Date) {
+  return `${formatIcsDate(date)}T${String(date.getUTCHours()).padStart(2, "0")}${String(date.getUTCMinutes()).padStart(2, "0")}${String(date.getUTCSeconds()).padStart(2, "0")}Z`;
+}
+
+function escapeIcsText(value: string) {
+  return value.replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+}
+
+function stablePlanId(value: string) {
+  let hash = 5381;
+  for (const character of value) hash = (hash * 33) ^ character.charCodeAt(0);
+  return (hash >>> 0).toString(36);
+}
+
+export function getCalendarReadyPlanCourses(courses: CoursePlanExportEntry[]) {
+  return getExportablePlanCourses(courses).flatMap(course => {
+    const date = getPlanDate(course.term);
+    return date ? [{ ...course, date }] : [];
+  });
+}
+
+export function buildCoursePlanCalendar(courses: CoursePlanExportEntry[], createdAt = new Date()) {
+  const events = getCalendarReadyPlanCourses(courses);
+  const lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Campus Quest//Course Plan//ZH-TW", "CALSCALE:GREGORIAN", "METHOD:PUBLISH"];
+  for (const course of events) {
+    const nextDay = new Date(course.date.getTime() + 86_400_000);
+    const description = `學期：${course.term}\n類別：${planCategoryLabels[course.category]}\n優先程度：${planPriorityLabels[course.priority]}\n學分：${course.credits}\n這是課程規劃提醒，實際上課時間請依校方課表調整。`;
+    lines.push("BEGIN:VEVENT", `UID:${stablePlanId(`${course.id}|${course.term}|${course.name}`)}@campus-quest.local`, `DTSTAMP:${formatIcsTimestamp(createdAt)}`, `DTSTART;VALUE=DATE:${formatIcsDate(course.date)}`, `DTEND;VALUE=DATE:${formatIcsDate(nextDay)}`, `SUMMARY:${escapeIcsText(`課程規劃：${course.name.trim()}`)}`, `DESCRIPTION:${escapeIcsText(description)}`, `CATEGORIES:${escapeIcsText(planCategoryLabels[course.category])}`, "STATUS:TENTATIVE", "END:VEVENT");
+  }
+  return `${lines.join("\r\n")}\r\nEND:VCALENDAR\r\n`;
+}
+
 export function createBlankAcademicStart() {
   return {
     system: "4.3" as const,

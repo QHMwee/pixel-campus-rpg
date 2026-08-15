@@ -2,10 +2,12 @@ import {
   Award,
   BarChart3,
   BookOpen,
+  CalendarPlus,
   ChevronRight,
   CircleHelp,
   Compass,
   Crown,
+  Download,
   FolderKanban,
   FileText,
   GraduationCap,
@@ -27,6 +29,8 @@ import { TranscriptImportDialogV2 } from "@/components/TranscriptImportDialog";
 import { trpc } from "@/lib/trpc";
 import {
   buildCareerRecommendations,
+  buildCoursePlanCalendar,
+  buildCoursePlanCsv,
   calculateCredits,
   calculatePlannedCredits,
   careerProfiles,
@@ -38,6 +42,8 @@ import {
   getGradePoint,
   getLevel,
   getCreditPlanStatus,
+  getCalendarReadyPlanCourses,
+  getExportablePlanCourses,
   getTermGpas,
   getXp,
   gradeOptions,
@@ -156,6 +162,18 @@ function loadData(): QuestData {
   }
 }
 
+function downloadTextFile(content: string, fileName: string, mimeType: string) {
+  const blob = new Blob([content], { type: `${mimeType};charset=utf-8` });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function Panel({ children, className = "", gold = false }: { children: React.ReactNode; className?: string; gold?: boolean }) {
   return <section className={`${gold ? "pixel-panel-gold" : "pixel-panel"} bg-[#1a2642] ${className}`}>{children}</section>;
 }
@@ -184,7 +202,7 @@ function PreferenceControls({ preferences, onChange }: { preferences: Recommenda
   return <Panel className="mb-4 overflow-hidden animate-pop-in"><PanelTitle eyebrow="RECOMMENDATION PREFERENCES" title="推薦偏好設定" action={<WandSparkles className="text-[#f4c659]" />} /><div className="grid gap-3 p-4 md:grid-cols-3"><Field label="本學期負荷"><select value={preferences.workload} onChange={event => onChange({ ...preferences, workload: event.target.value as RecommendationPreferences["workload"] })} className="pixel-input w-full px-3 py-2.5"><option value="light">輕量 12–14 學分</option><option value="balanced">平衡 15–18 學分</option><option value="ambitious">挑戰 18+ 學分</option></select></Field><Field label="偏好課程類別"><select value={preferences.category} onChange={event => onChange({ ...preferences, category: event.target.value as RecommendationPreferences["category"] })} className="pixel-input w-full px-3 py-2.5"><option value="any">不限類別</option><option value="required">必修優先</option><option value="elective">選修優先</option><option value="general">通識優先</option></select></Field><Field label="專題取向"><select value={preferences.projectStyle} onChange={event => onChange({ ...preferences, projectStyle: event.target.value as RecommendationPreferences["projectStyle"] })} className="pixel-input w-full px-3 py-2.5"><option value="individual">個人作品集</option><option value="team">團隊協作</option><option value="research">研究／競賽</option></select></Field></div></Panel>;
 }
 
-function CoursePlanView({ courses, completedCredits, plannedCredits, plannedRequiredCredits, goals, onAdd, onUpdate, onRemove, onComplete }: { courses: PlannedCourse[]; completedCredits: number; plannedCredits: number; plannedRequiredCredits: number; goals: GraduationGoals; onAdd: () => void; onUpdate: (id: string, patch: Partial<PlannedCourse>) => void; onRemove: (id: string) => void; onComplete: () => void }) {
+function CoursePlanView({ courses, completedCredits, plannedCredits, plannedRequiredCredits, goals, exportableCount, calendarReadyCount, exportNotice, onAdd, onUpdate, onRemove, onExportCsv, onExportCalendar, onComplete }: { courses: PlannedCourse[]; completedCredits: number; plannedCredits: number; plannedRequiredCredits: number; goals: GraduationGoals; exportableCount: number; calendarReadyCount: number; exportNotice: string | null; onAdd: () => void; onUpdate: (id: string, patch: Partial<PlannedCourse>) => void; onRemove: (id: string) => void; onExportCsv: () => void; onExportCalendar: () => void; onComplete: () => void }) {
   const priorityLabel: Record<PlannedCourse["priority"], string> = { must: "一定要修", important: "很想安排", explore: "還在考慮" };
   const priorityTone: Record<PlannedCourse["priority"], string> = { must: "border-[#f4c659] bg-[#594a28] text-[#ffe797]", important: "border-[#74e2b1] bg-[#24534a] text-[#c7f7dc]", explore: "border-[#a998ff] bg-[#473d82] text-[#e7dfff]" };
   const remainingTarget = Math.max(0, goals.total - completedCredits);
@@ -192,6 +210,7 @@ function CoursePlanView({ courses, completedCredits, plannedCredits, plannedRequ
     <Panel gold className="overflow-hidden"><div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[auto_minmax(0,1fr)]"><span className="crest mx-auto flex h-16 w-16 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[4px_4px_0_#080d1f] lg:mx-0"><BookOpen size={31} /></span><div><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">FIRST STEP · YOUR COURSE PLAN</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">先把你心中的課表寫下來</h2><p className="mt-3 max-w-3xl text-sm leading-7 text-[#c9d7ee]">不用一次把大學四年排得很完整。先從你已知道、最想修，或覺得不能錯過的課開始；之後可以隨時回來修改。這份規劃只是一張幫你思考的地圖，不會被當成已完成的成績或學分。</p></div></div></Panel>
     <div className="grid gap-4 md:grid-cols-3"><SmallMetric label="已完成學分" value={`${completedCredits}`} /><SmallMetric label="目前規劃學分" value={`${plannedCredits}`} /><SmallMetric label="規劃中的必修" value={`${plannedRequiredCredits}`} /></div>
     <Panel className="overflow-hidden"><PanelTitle eyebrow="COURSE PLAN TABLE" title="我的修課規劃" action={<PixelButton onClick={onAdd} className="bg-[#f4c659] text-[#152544]"><Plus size={16} /> 加入一門課</PixelButton>} /><div className="p-4 sm:p-5">{courses.length === 0 ? <EmptyState icon={<BookOpen />} title="先從下一門想修的課開始" detail="例如填入下一學期的必修、想探索的選修，或只是暫時放進來比較的課。這裡沒有標準答案。" action={onAdd} /> : <><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead className="text-xs text-[#9caed0]"><tr><th className="pb-2 pl-2">預計學期</th><th className="pb-2">課程名稱</th><th className="pb-2 text-center">學分</th><th className="pb-2">類別</th><th className="pb-2">優先程度</th><th className="pb-2 text-right">操作</th></tr></thead><tbody>{courses.map(course => <tr key={course.id} className="border-t-2 border-[#334b73]"><td className="py-2 pl-2 pr-2"><input aria-label={`${course.name || "新課程"}的預計學期`} value={course.term} onChange={event => onUpdate(course.id, { term: event.target.value })} placeholder="例如：115-1" className="pixel-input w-28 px-2 py-2 text-xs" /></td><td className="py-2 pr-2"><input aria-label="課程名稱" value={course.name} onChange={event => onUpdate(course.id, { name: event.target.value })} placeholder="例如：統計學" className="pixel-input w-full min-w-48 px-2 py-2 text-xs" /></td><td className="py-2 pr-2 text-center"><input aria-label="預估學分" type="number" min="1" max="12" step="0.5" value={course.credits} onChange={event => onUpdate(course.id, { credits: Number(event.target.value) })} className="pixel-input w-20 px-2 py-2 text-center text-xs" /></td><td className="py-2 pr-2"><select aria-label="課程類別" value={course.category} onChange={event => onUpdate(course.id, { category: event.target.value as CourseCategory })} className="pixel-input w-24 px-2 py-2 text-xs">{Object.entries(categoryLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 pr-2"><select aria-label="優先程度" value={course.priority} onChange={event => onUpdate(course.id, { priority: event.target.value as PlannedCourse["priority"] })} className="pixel-input w-32 px-2 py-2 text-xs">{Object.entries(priorityLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 text-right"><button onClick={() => onRemove(course.id)} className="p-2 text-[#b9c8e6] hover:text-[#f28682]" aria-label={`移除 ${course.name || "這門課"}`}><Trash2 size={16} /></button></td></tr>)}</tbody></table></div><div className="mt-4 flex flex-wrap gap-2">{courses.map(course => <span key={`${course.id}-badge`} className={`border px-2 py-1 text-xs font-black ${priorityTone[course.priority]}`}>{course.name.trim() || "尚未命名的課程"} · {priorityLabel[course.priority]}</span>)}</div></>}</div></Panel>
+    <Panel className="overflow-hidden"><PanelTitle eyebrow="SAVE YOUR PLAN" title="把規劃帶著走" action={<Download className="text-[#f4c659]" />} /><div className="space-y-4 p-5"><p className="max-w-3xl text-sm leading-7 text-[#c7d5eb]">CSV 適合放進 Excel、Google 試算表或之後再匯入；行事曆會依學期建立全天提醒，第一學期標在 8 月 1 日、第二學期標在隔年 2 月 1 日，實際上課時間請再依校方課表調整。</p><div className="grid gap-3 md:grid-cols-2"><div className="border-2 border-[#4d638d] bg-[#15233f] p-4"><p className="font-black text-[#fff8df]">CSV 課程規劃表</p><p className="mt-2 text-xs leading-5 text-[#aec0de]">匯出學期、課程、學分、類別與優先程度。已可匯出 {exportableCount} 門課。</p><PixelButton disabled={!exportableCount} onClick={onExportCsv} className="mt-4 w-full bg-[#f4c659] text-[#152544] disabled:cursor-not-allowed disabled:opacity-50"><Download size={16} /> 下載 CSV</PixelButton></div><div className="border-2 border-[#5b5194] bg-[#1d2549] p-4"><p className="font-black text-[#fff8df]">行事曆提醒（.ics）</p><p className="mt-2 text-xs leading-5 text-[#cfc7f5]">可加入 Apple、Google 或 Outlook 行事曆。已可建立 {calendarReadyCount} 個提醒。</p><PixelButton disabled={!calendarReadyCount} onClick={onExportCalendar} className="mt-4 w-full bg-[#5a48b9] disabled:cursor-not-allowed disabled:opacity-50"><CalendarPlus size={16} /> 下載 .ics</PixelButton></div></div>{exportNotice && <p className="border-l-4 border-[#74e2b1] bg-[#1b433f] px-3 py-2 text-xs leading-5 text-[#d2f8e3]">{exportNotice}</p>}</div></Panel>
     <Panel className="overflow-hidden"><div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-[#fff8df]">你離畢業目標還有 {remainingTarget} 學分。</p><p className="mt-2 max-w-2xl text-sm leading-6 text-[#b8c9e4]">完成這一步後，系統會把你的規劃放進總覽與選課建議中。沒有填完也沒關係，未來每次選課前都可以回來補充。</p></div><PixelButton onClick={onComplete} className="shrink-0 bg-[#5a48b9]"><ShieldCheck size={16} /> {courses.length ? "帶著規劃前往總覽" : "先看看我的總覽"}</PixelButton></div></Panel>
   </div>;
 }
@@ -233,6 +252,7 @@ export default function Home() {
   const [transcriptDraft, setTranscriptDraft] = useState<Omit<CourseRecord, "id">[]>([]);
   const [transcriptMapping, setTranscriptMapping] = useState<TranscriptFieldMap>({});
   const [pdfConversionNote, setPdfConversionNote] = useState<string | null>(null);
+  const [planExportNotice, setPlanExportNotice] = useState<string | null>(null);
   const [importReport, setImportReport] = useState<{ courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null>(null);
   const mounted = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
@@ -266,6 +286,8 @@ export default function Home() {
   const plannedCredits = plannedCreditBreakdown.total;
   const plannedRequiredCredits = plannedCreditBreakdown.required;
   const creditPlanStatus = useMemo(() => getCreditPlanStatus(credits, plannedCreditBreakdown, data.goals), [credits, data.goals, plannedCreditBreakdown]);
+  const exportablePlanCourses = useMemo(() => getExportablePlanCourses(data.plannedCourses), [data.plannedCourses]);
+  const calendarReadyPlanCourses = useMemo(() => getCalendarReadyPlanCourses(data.plannedCourses), [data.plannedCourses]);
   const aiSnapshot = useMemo<AiPlannerSnapshot>(() => ({
     gpa,
     gpaSystem: data.system,
@@ -323,6 +345,25 @@ export default function Home() {
   function completePlanIntro() {
     setData(current => ({ ...current, hasCompletedPlanIntro: true }));
     setActiveView("dashboard");
+  }
+
+  function exportCoursePlanCsv() {
+    if (!exportablePlanCourses.length) {
+      setPlanExportNotice("請先填寫至少一門課的學期、課程名稱與有效學分，才能建立 CSV。");
+      return;
+    }
+    downloadTextFile(buildCoursePlanCsv(data.plannedCourses), "campus-quest-course-plan.csv", "text/csv");
+    setPlanExportNotice(`已下載 CSV，包含 ${exportablePlanCourses.length} 門已完成欄位的規劃課程。`);
+  }
+
+  function exportCoursePlanCalendar() {
+    if (!calendarReadyPlanCourses.length) {
+      setPlanExportNotice("行事曆需要「115-1」或「115/1」這類學期格式，請先補齊至少一門課的學期。");
+      return;
+    }
+    downloadTextFile(buildCoursePlanCalendar(data.plannedCourses), "campus-quest-course-plan.ics", "text/calendar");
+    const skipped = exportablePlanCourses.length - calendarReadyPlanCourses.length;
+    setPlanExportNotice(`已下載 .ics 行事曆，建立 ${calendarReadyPlanCourses.length} 個全天課程規劃提醒${skipped > 0 ? `；另有 ${skipped} 門因學期格式未辨識而未加入。` : "。"}`);
   }
 
   function saveCourse() {
@@ -492,7 +533,7 @@ export default function Home() {
               <div className="border-2 border-[#526995] bg-[#192844] px-3 py-2 text-xs font-bold text-[#d8e4fb]">GPA 計算採用 <b className="ml-1 text-[#f4c659]">4.3 制</b></div>
             </div>
 
-            {activeView === "plan" && <CoursePlanView courses={data.plannedCourses} completedCredits={credits.total} plannedCredits={plannedCredits} plannedRequiredCredits={plannedRequiredCredits} goals={data.goals} onAdd={addPlannedCourse} onUpdate={updatePlannedCourse} onRemove={removePlannedCourse} onComplete={completePlanIntro} />}
+            {activeView === "plan" && <CoursePlanView courses={data.plannedCourses} completedCredits={credits.total} plannedCredits={plannedCredits} plannedRequiredCredits={plannedRequiredCredits} goals={data.goals} exportableCount={exportablePlanCourses.length} calendarReadyCount={calendarReadyPlanCourses.length} exportNotice={planExportNotice} onAdd={addPlannedCourse} onUpdate={updatePlannedCourse} onRemove={removePlannedCourse} onExportCsv={exportCoursePlanCsv} onExportCalendar={exportCoursePlanCalendar} onComplete={completePlanIntro} />}
             {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} skills={academicSkills} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={setActiveView} />}
             {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} /></>}

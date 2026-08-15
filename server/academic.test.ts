@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildRecommendations,
   buildCareerRecommendations,
+  buildCoursePlanCalendar,
+  buildCoursePlanCsv,
   calculateCredits,
   calculatePlannedCredits,
   calculateGpa,
   createBlankAcademicStart,
   getCreditPlanStatus,
+  getCalendarReadyPlanCourses,
   getAchievements,
   getAcademicSkills,
   getGradePoint,
@@ -208,5 +211,34 @@ describe("academic calculations", () => {
     const status = getCreditPlanStatus(completed, planned, { total: 10, required: 6, elective: 2, general: 2, semestersLeft: 4 });
     expect(status.find(row => row.category === "total")).toMatchObject({ completedCredits: 3, plannedCredits: 5, remainingAfterPlan: 2 });
     expect(status.find(row => row.category === "required")).toMatchObject({ completedCredits: 3, plannedCredits: 3, remainingAfterPlan: 0 });
+  });
+
+  it("可安全匯出課程規劃 CSV，並略過不完整的課程列", () => {
+    const csv = buildCoursePlanCsv([
+      { id: "plan-1", term: "115-1", name: '統計,方法 "一"', credits: 3, category: "required", priority: "must" },
+      { id: "plan-2", term: "", name: "尚未排定", credits: 3, category: "elective", priority: "explore" },
+      { id: "plan-3", term: "115-2", name: "=公式保護", credits: 2, category: "general", priority: "important" },
+    ]);
+    expect(csv).toContain("\uFEFF\"預計學期\"");
+    expect(csv).toContain('"統計,方法 ""一"""');
+    expect(csv).toContain("\"'=公式保護\"");
+    expect(csv).not.toContain("尚未排定");
+  });
+
+  it("會將可辨識學期轉成全天 .ics 行事曆事件，且不完整學期不會被排入行事曆", () => {
+    const planned = [
+      { id: "plan-1", term: "115-1", name: "統計學", credits: 3, category: "required" as const, priority: "must" as const },
+      { id: "plan-2", term: "115-2", name: "資料庫系統", credits: 3, category: "elective" as const, priority: "important" as const },
+      { id: "plan-3", term: "未排定", name: "探索課", credits: 2, category: "general" as const, priority: "explore" as const },
+    ];
+    expect(getCalendarReadyPlanCourses(planned)).toHaveLength(2);
+    const calendar = buildCoursePlanCalendar(planned, new Date("2026-01-02T03:04:05Z"));
+    expect(calendar).toContain("BEGIN:VCALENDAR");
+    expect(calendar).toContain("DTSTAMP:20260102T030405Z");
+    expect(calendar).toContain("DTSTART;VALUE=DATE:20260801");
+    expect(calendar).toContain("DTSTART;VALUE=DATE:20270201");
+    expect(calendar).toContain("SUMMARY:課程規劃：統計學");
+    expect(calendar).not.toContain("探索課");
+    expect(calendar).toContain("END:VCALENDAR");
   });
 });
