@@ -31,7 +31,6 @@ import {
   buildCareerRecommendations,
   buildCoursePlanCalendar,
   buildCoursePlanCsv,
-  buildNotionCoursePlanCsv,
   calculateCredits,
   calculatePlannedCredits,
   careerProfiles,
@@ -127,7 +126,7 @@ const statusTone: Record<ProjectStatus, string> = { planning: "bg-[#687b9e]", ac
 
 const navItems: { id: View; label: string; icon: typeof Compass }[] = [
   { id: "plan", label: "課程規劃", icon: BookOpen },
-  { id: "dashboard", label: "冒險總覽", icon: Compass },
+  { id: "dashboard", label: "策略總覽", icon: Compass },
   { id: "grades", label: "成績卷軸", icon: ScrollText },
   { id: "credits", label: "學分地圖", icon: Target },
   { id: "quest", label: "智慧任務", icon: WandSparkles },
@@ -203,7 +202,7 @@ function PreferenceControls({ preferences, onChange }: { preferences: Recommenda
   return <Panel className="mb-4 overflow-hidden animate-pop-in"><PanelTitle eyebrow="RECOMMENDATION PREFERENCES" title="推薦偏好設定" action={<WandSparkles className="text-[#f4c659]" />} /><div className="grid gap-3 p-4 md:grid-cols-3"><Field label="本學期負荷"><select value={preferences.workload} onChange={event => onChange({ ...preferences, workload: event.target.value as RecommendationPreferences["workload"] })} className="pixel-input w-full px-3 py-2.5"><option value="light">輕量 12–14 學分</option><option value="balanced">平衡 15–18 學分</option><option value="ambitious">挑戰 18+ 學分</option></select></Field><Field label="偏好課程類別"><select value={preferences.category} onChange={event => onChange({ ...preferences, category: event.target.value as RecommendationPreferences["category"] })} className="pixel-input w-full px-3 py-2.5"><option value="any">不限類別</option><option value="required">必修優先</option><option value="elective">選修優先</option><option value="general">通識優先</option></select></Field><Field label="專題取向"><select value={preferences.projectStyle} onChange={event => onChange({ ...preferences, projectStyle: event.target.value as RecommendationPreferences["projectStyle"] })} className="pixel-input w-full px-3 py-2.5"><option value="individual">個人作品集</option><option value="team">團隊協作</option><option value="research">研究／競賽</option></select></Field></div></Panel>;
 }
 
-function CoursePlanView({ courses, completedCredits, plannedCredits, plannedRequiredCredits, goals, exportableCount, calendarReadyCount, exportNotice, onAdd, onUpdate, onRemove, onExportCsv, onExportNotionCsv, onOpenNotion, onExportCalendar, onComplete }: { courses: PlannedCourse[]; completedCredits: number; plannedCredits: number; plannedRequiredCredits: number; goals: GraduationGoals; exportableCount: number; calendarReadyCount: number; exportNotice: string | null; onAdd: () => void; onUpdate: (id: string, patch: Partial<PlannedCourse>) => void; onRemove: (id: string) => void; onExportCsv: () => void; onExportNotionCsv: () => void; onOpenNotion: () => void; onExportCalendar: () => void; onComplete: () => void }) {
+function CoursePlanView({ courses, completedCredits, plannedCredits, plannedRequiredCredits, goals, exportableCount, calendarReadyCount, exportNotice, onAdd, onUpdate, onRemove, onExportCsv, onExportCalendar, onComplete }: { courses: PlannedCourse[]; completedCredits: number; plannedCredits: number; plannedRequiredCredits: number; goals: GraduationGoals; exportableCount: number; calendarReadyCount: number; exportNotice: string | null; onAdd: () => void; onUpdate: (id: string, patch: Partial<PlannedCourse>) => void; onRemove: (id: string) => void; onExportCsv: () => void; onExportCalendar: () => void; onComplete: () => void }) {
   const priorityLabel: Record<PlannedCourse["priority"], string> = { must: "一定要修", important: "很想安排", explore: "還在考慮" };
   const priorityTone: Record<PlannedCourse["priority"], string> = { must: "border-[#f4c659] bg-[#594a28] text-[#ffe797]", important: "border-[#74e2b1] bg-[#24534a] text-[#c7f7dc]", explore: "border-[#a998ff] bg-[#473d82] text-[#e7dfff]" };
   const remainingTarget = Math.max(0, goals.total - completedCredits);
@@ -212,7 +211,6 @@ function CoursePlanView({ courses, completedCredits, plannedCredits, plannedRequ
     <div className="grid gap-4 md:grid-cols-3"><SmallMetric label="已完成學分" value={`${completedCredits}`} /><SmallMetric label="目前規劃學分" value={`${plannedCredits}`} /><SmallMetric label="規劃中的必修" value={`${plannedRequiredCredits}`} /></div>
     <Panel className="overflow-hidden"><PanelTitle eyebrow="COURSE PLAN TABLE" title="我的修課規劃" action={<PixelButton onClick={onAdd} className="bg-[#f4c659] text-[#152544]"><Plus size={16} /> 加入一門課</PixelButton>} /><div className="p-4 sm:p-5">{courses.length === 0 ? <EmptyState icon={<BookOpen />} title="先從下一門想修的課開始" detail="例如填入下一學期的必修、想探索的選修，或只是暫時放進來比較的課。這裡沒有標準答案。" action={onAdd} /> : <><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead className="text-xs text-[#9caed0]"><tr><th className="pb-2 pl-2">預計學期</th><th className="pb-2">課程名稱</th><th className="pb-2 text-center">學分</th><th className="pb-2">類別</th><th className="pb-2">優先程度</th><th className="pb-2 text-right">操作</th></tr></thead><tbody>{courses.map(course => <tr key={course.id} className="border-t-2 border-[#334b73]"><td className="py-2 pl-2 pr-2"><input aria-label={`${course.name || "新課程"}的預計學期`} value={course.term} onChange={event => onUpdate(course.id, { term: event.target.value })} placeholder="例如：115-1" className="pixel-input w-28 px-2 py-2 text-xs" /></td><td className="py-2 pr-2"><input aria-label="課程名稱" value={course.name} onChange={event => onUpdate(course.id, { name: event.target.value })} placeholder="例如：統計學" className="pixel-input w-full min-w-48 px-2 py-2 text-xs" /></td><td className="py-2 pr-2 text-center"><input aria-label="預估學分" type="number" min="1" max="12" step="0.5" value={course.credits} onChange={event => onUpdate(course.id, { credits: Number(event.target.value) })} className="pixel-input w-20 px-2 py-2 text-center text-xs" /></td><td className="py-2 pr-2"><select aria-label="課程類別" value={course.category} onChange={event => onUpdate(course.id, { category: event.target.value as CourseCategory })} className="pixel-input w-24 px-2 py-2 text-xs">{Object.entries(categoryLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 pr-2"><select aria-label="優先程度" value={course.priority} onChange={event => onUpdate(course.id, { priority: event.target.value as PlannedCourse["priority"] })} className="pixel-input w-32 px-2 py-2 text-xs">{Object.entries(priorityLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 text-right"><button onClick={() => onRemove(course.id)} className="p-2 text-[#b9c8e6] hover:text-[#f28682]" aria-label={`移除 ${course.name || "這門課"}`}><Trash2 size={16} /></button></td></tr>)}</tbody></table></div><div className="mt-4 flex flex-wrap gap-2">{courses.map(course => <span key={`${course.id}-badge`} className={`border px-2 py-1 text-xs font-black ${priorityTone[course.priority]}`}>{course.name.trim() || "尚未命名的課程"} · {priorityLabel[course.priority]}</span>)}</div></>}</div></Panel>
     <Panel className="overflow-hidden"><PanelTitle eyebrow="SAVE YOUR PLAN" title="把規劃帶著走" action={<Download className="text-[#f4c659]" />} /><div className="space-y-4 p-5"><p className="max-w-3xl text-sm leading-7 text-[#c7d5eb]">CSV 適合放進 Excel、Google 試算表或之後再匯入；行事曆會依學期建立全天提醒，第一學期標在 8 月 1 日、第二學期標在隔年 2 月 1 日，實際上課時間請再依校方課表調整。</p><div className="grid gap-3 md:grid-cols-2"><div className="border-2 border-[#4d638d] bg-[#15233f] p-4"><p className="font-black text-[#fff8df]">CSV 課程規劃表</p><p className="mt-2 text-xs leading-5 text-[#aec0de]">匯出學期、課程、學分、類別與優先程度。已可匯出 {exportableCount} 門課。</p><PixelButton disabled={!exportableCount} onClick={onExportCsv} className="mt-4 w-full bg-[#f4c659] text-[#152544] disabled:cursor-not-allowed disabled:opacity-50"><Download size={16} /> 下載 CSV</PixelButton></div><div className="border-2 border-[#5b5194] bg-[#1d2549] p-4"><p className="font-black text-[#fff8df]">行事曆提醒（.ics）</p><p className="mt-2 text-xs leading-5 text-[#cfc7f5]">可加入 Apple、Google 或 Outlook 行事曆。已可建立 {calendarReadyCount} 個提醒。</p><PixelButton disabled={!calendarReadyCount} onClick={onExportCalendar} className="mt-4 w-full bg-[#5a48b9] disabled:cursor-not-allowed disabled:opacity-50"><CalendarPlus size={16} /> 下載 .ics</PixelButton></div></div>{exportNotice && <p className="border-l-4 border-[#74e2b1] bg-[#1b433f] px-3 py-2 text-xs leading-5 text-[#d2f8e3]">{exportNotice}</p>}</div></Panel>
-    <Panel gold className="overflow-hidden"><PanelTitle eyebrow="NOTION FOUR-YEAR PLAN" title="Notion 四年規劃已連結" action={<BookOpen className="text-[#f4c659]" />} /><div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto]"><div><p className="text-sm leading-7 text-[#d5e0f2]">你的 Notion「四年學業戰略規劃」已新增 Campus Quest 四年課程地圖與同步欄位。下載合併 CSV 後，在 Notion 的「📚 課程管理」選擇 <b className="text-[#ffe797]">Merge with CSV</b>，即可把規劃課程帶入四年地圖。</p><p className="mt-3 border-l-4 border-[#74e2b1] pl-3 text-xs leading-5 text-[#c7f7dc]">這是使用者主動匯出的單向合併流程：不會自動覆寫 Notion 既有資料，也不會修改這台裝置上的課程規劃。</p></div><div className="flex flex-col gap-2 sm:flex-row lg:flex-col"><PixelButton onClick={onOpenNotion} className="bg-[#5a48b9]"><BookOpen size={16} /> 開啟四年規劃</PixelButton><PixelButton disabled={!exportableCount} onClick={onExportNotionCsv} className="bg-[#f4c659] text-[#152544] disabled:cursor-not-allowed disabled:opacity-50"><Download size={16} /> 下載 Notion 合併 CSV</PixelButton></div></div></Panel>
     <Panel className="overflow-hidden"><div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-[#fff8df]">你離畢業目標還有 {remainingTarget} 學分。</p><p className="mt-2 max-w-2xl text-sm leading-6 text-[#b8c9e4]">完成這一步後，系統會把你的規劃放進總覽與選課建議中。沒有填完也沒關係，未來每次選課前都可以回來補充。</p></div><PixelButton onClick={onComplete} className="shrink-0 bg-[#5a48b9]"><ShieldCheck size={16} /> {courses.length ? "帶著規劃前往總覽" : "先看看我的總覽"}</PixelButton></div></Panel>
   </div>;
 }
@@ -358,19 +356,6 @@ export default function Home() {
     setPlanExportNotice(`已下載 CSV，包含 ${exportablePlanCourses.length} 門已完成欄位的規劃課程。`);
   }
 
-  function exportNotionCoursePlanCsv() {
-    if (!exportablePlanCourses.length) {
-      setPlanExportNotice("請先填寫至少一門課的學期、課程名稱與有效學分，才能建立 Notion 合併 CSV。");
-      return;
-    }
-    downloadTextFile(buildNotionCoursePlanCsv(data.plannedCourses), "campus-quest-notion-four-year-plan.csv", "text/csv");
-    setPlanExportNotice(`已下載 Notion 合併 CSV，包含 ${exportablePlanCourses.length} 門規劃課程；匯入前請先在 Notion 的「📚 課程管理」選擇 Merge with CSV。`);
-  }
-
-  function openNotionFourYearPlan() {
-    window.open("https://app.notion.com/p/3a00b85565a5818c8ae1f0b0d8748d4d?pvs=204", "_blank", "noopener,noreferrer");
-  }
-
   function exportCoursePlanCalendar() {
     if (!calendarReadyPlanCourses.length) {
       setPlanExportNotice("行事曆需要「115-1」或「115/1」這類學期格式，請先補齊至少一門課的學期。");
@@ -498,7 +483,7 @@ export default function Home() {
     setTranscriptOpen(false);
   }
 
-  const currentTitle = navItems.find(item => item.id === activeView)?.label ?? "冒險總覽";
+  const currentTitle = navItems.find(item => item.id === activeView)?.label ?? "策略總覽";
 
   return (
     <main className="min-h-screen overflow-x-hidden pb-10">
@@ -507,8 +492,8 @@ export default function Home() {
           <button onClick={() => setActiveView(data.hasCompletedPlanIntro ? "dashboard" : "plan")} className="flex items-center gap-3 text-left" aria-label="前往主要頁面">
             <span className="crest flex h-12 w-12 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[3px_3px_0_#080d1f]"><GraduationCap size={27} strokeWidth={2.8} /></span>
             <span>
-              <span className="pixel-font block text-[10px] leading-6 text-[#f4c659]">CAMPUS QUEST</span>
-              <span className="block text-sm font-bold tracking-[.22em] text-[#f7f2d3]">大學生涯冒險誌</span>
+              <span className="pixel-font block text-[10px] leading-6 text-[#f4c659]">MY ACADEMIC OS</span>
+              <span className="block text-sm font-bold tracking-[.16em] text-[#f7f2d3]">我的四年學業規劃</span>
             </span>
           </button>
           <div className="flex items-center gap-3 self-end sm:self-auto">
@@ -523,8 +508,8 @@ export default function Home() {
         <div className="mt-4 grid gap-4 lg:grid-cols-[232px_minmax(0,1fr)]">
           <aside className="pixel-panel h-fit bg-[#17243f] p-3 lg:sticky lg:top-5">
             <div className="border-b-2 border-[#4b628e] px-3 pb-4 pt-2">
-              <p className="pixel-font text-[8px] leading-5 text-[#f4c659]">PLAYER PROFILE</p>
-              <p className="mt-2 font-extrabold text-[#fff8df]">學術冒險者</p>
+              <p className="pixel-font text-[8px] leading-5 text-[#f4c659]">PERSONAL STRATEGY</p>
+              <p className="mt-2 font-extrabold text-[#fff8df]">我的學業戰略</p>
             </div>
             <nav className="mt-3 grid grid-cols-2 gap-2 lg:grid-cols-1" aria-label="主要功能">
               {navItems.map(item => {
@@ -548,7 +533,7 @@ export default function Home() {
               <div className="border-2 border-[#526995] bg-[#192844] px-3 py-2 text-xs font-bold text-[#d8e4fb]">GPA 計算採用 <b className="ml-1 text-[#f4c659]">4.3 制</b></div>
             </div>
 
-            {activeView === "plan" && <CoursePlanView courses={data.plannedCourses} completedCredits={credits.total} plannedCredits={plannedCredits} plannedRequiredCredits={plannedRequiredCredits} goals={data.goals} exportableCount={exportablePlanCourses.length} calendarReadyCount={calendarReadyPlanCourses.length} exportNotice={planExportNotice} onAdd={addPlannedCourse} onUpdate={updatePlannedCourse} onRemove={removePlannedCourse} onExportCsv={exportCoursePlanCsv} onExportNotionCsv={exportNotionCoursePlanCsv} onOpenNotion={openNotionFourYearPlan} onExportCalendar={exportCoursePlanCalendar} onComplete={completePlanIntro} />}
+            {activeView === "plan" && <CoursePlanView courses={data.plannedCourses} completedCredits={credits.total} plannedCredits={plannedCredits} plannedRequiredCredits={plannedRequiredCredits} goals={data.goals} exportableCount={exportablePlanCourses.length} calendarReadyCount={calendarReadyPlanCourses.length} exportNotice={planExportNotice} onAdd={addPlannedCourse} onUpdate={updatePlannedCourse} onRemove={removePlannedCourse} onExportCsv={exportCoursePlanCsv} onExportCalendar={exportCoursePlanCalendar} onComplete={completePlanIntro} />}
             {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} skills={academicSkills} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={setActiveView} />}
             {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} /></>}
@@ -567,9 +552,38 @@ export default function Home() {
   );
 }
 
+function PersonalStrategyPanel({ onGo }: { onGo: (view: View) => void }) {
+  const pillars = [
+    { title: "核心方向", detail: "用 AI 與通訊能力，讓選課、作品與職涯探索彼此支援。", tone: "border-[#f4c659] bg-[#594a28] text-[#ffe797]" },
+    { title: "現有優勢", detail: "程式與英語能力是可延伸的基礎；把它們放進課程與專題的每一次選擇。", tone: "border-[#74e2b1] bg-[#24534a] text-[#c7f7dc]" },
+    { title: "優先補強", detail: "數學基礎與電類背景需要被切成小步驟，而不是留在模糊的待辦清單裡。", tone: "border-[#a998ff] bg-[#473d82] text-[#e7dfff]" },
+  ];
+  return <Panel gold className="overflow-hidden"><PanelTitle eyebrow="MY FOUR-YEAR COMPASS" title="把四年，走成自己的職涯策略" action={<Compass className="text-[#f4c659]" />} /><div className="space-y-5 p-5 sm:p-7"><div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(260px,.75fr)]"><div><p className="text-2xl font-black leading-tight text-[#fff8df] sm:text-3xl">不需要一次決定所有答案。<br /><span className="text-[#f4c659]">先讓每一學期，都更靠近想成為的自己。</span></p><p className="mt-4 max-w-2xl text-sm leading-7 text-[#c8d7ed]">這個網站把你的四年學業戰略整理成可實際使用的地圖：課程紀錄負責看見累積，學分地圖負責掌握畢業門檻，專題與里程碑則提醒你把能力變成作品。</p><div className="mt-5 flex flex-wrap gap-2"><PixelButton onClick={() => onGo("plan")} className="bg-[#f4c659] text-[#152544]"><BookOpen size={16} /> 建立這學期規劃</PixelButton><PixelButton onClick={() => onGo("credits")} className="bg-[#5a48b9]"><Target size={16} /> 檢視畢業缺口</PixelButton></div></div><div className="border-2 border-[#5d719b] bg-[#13213b] p-4"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">FOUR-YEAR CHECKPOINTS</p><ul className="mt-3 space-y-3 text-sm leading-6 text-[#d7e3f5]"><li><b className="text-[#ffe797]">學業：</b>完成核心選修與畢業學分配置。</li><li><b className="text-[#c7f7dc]">實務：</b>累積可說明的專題與實習經驗。</li><li><b className="text-[#ded6ff]">能力：</b>朝多益 550+ 與可驗證的技術能力前進。</li></ul><p className="mt-4 border-l-4 border-[#74e2b1] pl-3 text-xs leading-5 text-[#bdebd3]">檢核項目是方向，不是壓力。你可以依校系規定與自身步調隨時調整。</p></div></div><div className="grid gap-3 md:grid-cols-3">{pillars.map(pillar => <div key={pillar.title} className={`border-2 p-4 ${pillar.tone}`}><p className="font-black">{pillar.title}</p><p className="mt-2 text-xs leading-5 opacity-95">{pillar.detail}</p></div>)}</div><div className="border-2 border-[#50658e] bg-[#152440] p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-[#fff8df]">先處理可控的風險，再擴大自己想做的事。</p><p className="mt-1 text-xs leading-5 text-[#b6c6e2]">用課程規劃檢查擋修與衝堂，用成績卷軸追蹤 GPA，用專題工坊累積能被看見的成果。</p></div><PixelButton onClick={() => onGo("quest")} className="shrink-0 bg-[#31496f]"><WandSparkles size={16} /> 整理下一步</PixelButton></div></div></div></Panel>;
+}
+
+function FourYearRoadmapPanel({ data, credits, onGo }: { data: QuestData; credits: ReturnType<typeof calculateCredits>; onGo: (view: View) => void }) {
+  const plannedCredits = calculatePlannedCredits(data.plannedCourses).total;
+  const coursePreview = data.plannedCourses.filter(course => course.name.trim()).slice(0, 2).map(course => `${course.term || "未排學期"} · ${course.name.trim()}`).join("、");
+  const tracks = [
+    { title: "課程與學分", source: "Notion：課程管理", detail: data.plannedCourses.length ? `已規劃 ${data.plannedCourses.length} 門課、${plannedCredits} 學分；已完成 ${credits.total} 學分。${coursePreview ? `目前安排：${coursePreview}。` : ""}` : "Notion 的課程資料尚未建立實際項目；先從下一學期的一門課開始。", action: "前往課程規劃", view: "plan" as View, tone: "border-[#f4c659] bg-[#493e26]" },
+    { title: "能力補強", source: "Notion：長期計畫與補強", detail: "以數學基礎與電類背景為補強主線，將大目標拆成能完成的小單位。", action: "整理智慧任務", view: "quest" as View, tone: "border-[#a998ff] bg-[#342e65]" },
+    { title: "專題與實務", source: "Notion：實務專題系統", detail: data.projects.length ? `目前有 ${data.projects.length} 個本機專題紀錄；把每一段探索留下可回看的脈絡。` : "專題資料目前尚未建立。從一個想解決的小問題開始，之後再補上階段與成果。", action: "開啟專題工坊", view: "projects" as View, tone: "border-[#74e2b1] bg-[#1e463f]" },
+    { title: "證照與里程碑", source: "Notion：證照、競賽與時間軸", detail: "目前尚未建立實際里程碑。可先把多益 550+、核心選修與實習學分化成自己的時間節點。", action: "檢查學分目標", view: "credits" as View, tone: "border-[#8ec6ff] bg-[#213f62]" },
+  ];
+  const stages = [
+    ["第一段", "基礎與探索", "用課程規劃安排必修與想嘗試的領域，找出需要優先補強的基礎。"],
+    ["第二段", "能力深化", "將程式、英語、數理與電類能力放進可追蹤的修課與練習節奏。"],
+    ["第三段", "專題與實務", "把課堂能力轉成專題、競賽或實習中的可說明成果。"],
+    ["第四段", "整合與收尾", "回頭檢查畢業學分、核心選修與個人作品，留出調整空間。"],
+  ];
+  return <Panel className="overflow-hidden"><PanelTitle eyebrow="NOTION STRATEGY BLUEPRINT" title="四年學業地圖" action={<Compass className="text-[#f4c659]" />} /><div className="space-y-5 p-5"><p className="max-w-3xl text-sm leading-7 text-[#c6d5eb]">這張地圖依你的 Notion 四年學業戰略建立。它保留已確認的方向，也清楚標示目前尚未建立實際項目的區塊；網站不會替你補造課程、專題或里程碑。</p><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{stages.map(([stage, title, detail], index) => <div key={stage} className="relative border-2 border-[#526892] bg-[#14233f] p-4"><span className="pixel-font text-[8px] text-[#f4c659]">0{index + 1} · {stage}</span><p className="mt-2 font-black text-[#fff8df]">{title}</p><p className="mt-2 text-xs leading-5 text-[#aec0df]">{detail}</p></div>)}</div><div className="grid gap-3 lg:grid-cols-2">{tracks.map(track => <div key={track.title} className={`border-2 p-4 ${track.tone}`}><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-black text-[#fff8df]">{track.title}</p><p className="mt-1 text-[10px] font-bold text-[#cbdaf0]">{track.source}</p></div><PixelButton onClick={() => onGo(track.view)} className="bg-[#192844] px-3 py-1.5 text-xs">{track.action}<ChevronRight size={14} /></PixelButton></div><p className="mt-3 text-sm leading-6 text-[#d6e3f7]">{track.detail}</p></div>)}</div></div></Panel>;
+}
+
 function DashboardView({ gpa, data, credits, level, xp, skills, recommendations, termGpas, completedProjects, unlockedAchievements, onGo }: { gpa: number; data: QuestData; credits: ReturnType<typeof calculateCredits>; level: ReturnType<typeof getLevel>; xp: number; skills: ReturnType<typeof getAcademicSkills>; recommendations: ReturnType<typeof buildCareerRecommendations>; termGpas: ReturnType<typeof getTermGpas>; completedProjects: number; unlockedAchievements: number; onGo: (view: View) => void }) {
   const recent = [...data.courses].sort((a, b) => b.term.localeCompare(a.term, "zh-Hant"))[0];
   return <div className="space-y-4 animate-pop-in">
+    <PersonalStrategyPanel onGo={onGo} />
+    <FourYearRoadmapPanel data={data} credits={credits} onGo={onGo} />
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(360px,.75fr)]">
       <Panel gold className="scanline overflow-hidden">
         <div className="grid gap-5 p-5 sm:grid-cols-[136px_minmax(0,1fr)] sm:p-7">
@@ -580,8 +594,8 @@ function DashboardView({ gpa, data, credits, level, xp, skills, recommendations,
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">STUDENT CHARACTER CARD</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">學術冒險者</h2><p className="mt-1 text-sm text-[#bfcce3]">主修未知領域 · 正在開拓下一張地圖</p></div>
-              <span className="border-2 border-[#67cca0] bg-[#1c4e48] px-3 py-1.5 text-xs font-black text-[#caffdd]">狀態：探索中</span>
+              <div><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">PERSONAL PROGRESS</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">我的學業進度</h2><p className="mt-1 text-sm text-[#bfcce3]">以課程、能力與作品累積，慢慢走向自己的職涯方向。</p></div>
+              <span className="border-2 border-[#67cca0] bg-[#1c4e48] px-3 py-1.5 text-xs font-black text-[#caffdd]">狀態：建立基線</span>
             </div>
             <div className="mt-6 flex items-center justify-between gap-4 text-xs font-bold"><span className="text-[#cad6ed]">經驗值 <b className="text-[#f4c659]">{xp} XP</b></span><span className="text-[#93a7cb]">距離 LV.{level.level + 1}：{level.xpToNext - level.xpIntoLevel} XP</span></div>
             <div className="mt-2"><ProgressBar value={level.progress} /></div>
