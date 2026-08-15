@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { trpc } from "@/lib/trpc";
 import {
   buildCareerRecommendations,
   calculateCredits,
@@ -60,6 +61,23 @@ type QuestData = {
   careerPath: CareerPath;
   preferences: RecommendationPreferences;
 };
+
+type AiPlanningSection = View;
+type AiPlannerSnapshot = {
+  gpa: number;
+  gpaSystem: GradePointSystem;
+  totalCredits: number;
+  remainingCredits: number;
+  semestersLeft: number;
+  termTrend: { term: string; gpa: number }[];
+  skills: string[];
+  careerPath: string;
+  preferences: { workload: string; category: string; projectStyle: string };
+  courses: { name: string; term: string; credits: number; grade: string; category: string }[];
+  projects: { name: string; status: string; tags: string[] }[];
+  unlockedAchievements: number;
+};
+type AiAdvice = { title: string; overview: string; focus: string; actions: { label: string; reason: string; urgency: "now" | "next" | "later" }[]; caution: string };
 
 const STORAGE_KEY = "campus-quest-save-v1";
 
@@ -150,6 +168,25 @@ function PreferenceControls({ preferences, onChange }: { preferences: Recommenda
   return <Panel className="mb-4 overflow-hidden animate-pop-in"><PanelTitle eyebrow="RECOMMENDATION PREFERENCES" title="推薦偏好設定" action={<WandSparkles className="text-[#f4c659]" />} /><div className="grid gap-3 p-4 md:grid-cols-3"><Field label="本學期負荷"><select value={preferences.workload} onChange={event => onChange({ ...preferences, workload: event.target.value as RecommendationPreferences["workload"] })} className="pixel-input w-full px-3 py-2.5"><option value="light">輕量 12–14 學分</option><option value="balanced">平衡 15–18 學分</option><option value="ambitious">挑戰 18+ 學分</option></select></Field><Field label="偏好課程類別"><select value={preferences.category} onChange={event => onChange({ ...preferences, category: event.target.value as RecommendationPreferences["category"] })} className="pixel-input w-full px-3 py-2.5"><option value="any">不限類別</option><option value="required">必修優先</option><option value="elective">選修優先</option><option value="general">通識優先</option></select></Field><Field label="專題取向"><select value={preferences.projectStyle} onChange={event => onChange({ ...preferences, projectStyle: event.target.value as RecommendationPreferences["projectStyle"] })} className="pixel-input w-full px-3 py-2.5"><option value="individual">個人作品集</option><option value="team">團隊協作</option><option value="research">研究／競賽</option></select></Field></div></Panel>;
 }
 
+function AiPlannerPanel({ section, snapshot }: { section: AiPlanningSection; snapshot: AiPlannerSnapshot }) {
+  const [advice, setAdvice] = useState<AiAdvice | null>(null);
+  const advisor = trpc.aiPlanner.generate.useMutation({ onSuccess: result => setAdvice(result.advice) });
+  const sectionLabel: Record<AiPlanningSection, string> = { dashboard: "整體冒險", grades: "成績卷軸", credits: "學分地圖", quest: "智慧任務", projects: "專題工坊", badges: "成就圖鑑" };
+  const urgencyTone = { now: "border-[#f4c659] bg-[#594a28] text-[#ffe797]", next: "border-[#74e2b1] bg-[#24534a] text-[#c7f7dc]", later: "border-[#a998ff] bg-[#473d82] text-[#e7dfff]" };
+  const urgencyLabel = { now: "立即", next: "下一步", later: "稍後" };
+
+  useEffect(() => { setAdvice(null); }, [section]);
+
+  return <Panel className="mt-4 overflow-hidden animate-pop-in" gold>
+    <PanelTitle eyebrow="AI PLANNING COMPANION" title={`${sectionLabel[section]} AI 顧問`} action={<Sparkles className="text-[#f4c659]" />} />
+    <div className="p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-extrabold text-[#fff8df]">依你的本機學業摘要生成可執行下一步</p><p className="mt-1 text-xs leading-5 text-[#aebdd9]">僅在你按下按鈕時傳送最小化摘要給 AI；建議不會自動修改成績、學分或專題資料。</p></div><PixelButton disabled={advisor.isPending} onClick={() => advisor.mutate({ section, snapshot })} className="shrink-0 bg-[#5a48b9]">{advisor.isPending ? <><Sparkles className="animate-pulse" size={16} /> AI 思考中</> : <><WandSparkles size={16} /> 召喚 AI 顧問</>}</PixelButton></div>
+      {advisor.error && <p className="mt-4 border-2 border-[#e8817a] bg-[#4a2d35] px-3 py-2 text-xs font-bold text-[#ffd7d2]">AI 服務暫時無法回應，請稍後再試。</p>}
+      {advice && <div className="mt-5 border-t-2 border-[#4f668f] pt-5 animate-pop-in"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">ADVISOR REPORT</p><h3 className="mt-1 text-xl font-black text-[#fff8df]">{advice.title}</h3></div><span className="border-2 border-[#74e2b1] bg-[#24534a] px-2 py-1 text-xs font-black text-[#c7f7dc]">{advisor.data?.source === "local" ? "本機策略備案" : "AI 分析完成"}</span></div><p className="mt-3 text-sm leading-6 text-[#c6d2e9]">{advice.overview}</p><div className="mt-4 border-l-4 border-[#f4c659] bg-[#14213b] px-4 py-3"><p className="text-[11px] font-black text-[#f4c659]">本輪焦點</p><p className="mt-1 text-sm font-bold leading-6 text-[#fff8df]">{advice.focus}</p></div><div className="mt-4 grid gap-3 lg:grid-cols-3">{advice.actions.map((action, index) => <div key={`${action.label}-${index}`} className="border-2 border-[#4a608a] bg-[#152440] p-3"><span className={`inline-flex border px-2 py-1 text-[10px] font-black ${urgencyTone[action.urgency]}`}>{urgencyLabel[action.urgency]}</span><p className="mt-2 text-sm font-black text-[#fff8df]">{action.label}</p><p className="mt-1 text-xs leading-5 text-[#b9c9e4]">{action.reason}</p></div>)}</div><p className="mt-4 text-xs leading-5 text-[#aebbd3]">注意：{advice.caution}</p></div>}
+    </div>
+  </Panel>;
+}
+
 export default function Home() {
   const [data, setData] = useState<QuestData>(loadData);
   const [activeView, setActiveView] = useState<View>(() => {
@@ -181,6 +218,20 @@ export default function Home() {
   const recommendationPreferences = data.preferences ?? defaultRecommendationPreferences;
   const recommendations = useMemo(() => buildCareerRecommendations(data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences), [data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences]);
   const completedProjects = data.projects.filter(project => project.status === "done").length;
+  const aiSnapshot = useMemo<AiPlannerSnapshot>(() => ({
+    gpa,
+    gpaSystem: data.system,
+    totalCredits: credits.total,
+    remainingCredits: Math.max(0, data.goals.total - credits.total),
+    semestersLeft: data.goals.semestersLeft,
+    termTrend: termGpas.map(item => ({ term: item.term, gpa: item.gpa })),
+    skills: academicSkills.map(skill => `${skill.name} · ${skill.tier === "mastered" ? "精通" : skill.tier === "proficient" ? "熟練" : "養成"}`),
+    careerPath: data.careerPath,
+    preferences: recommendationPreferences,
+    courses: data.courses.map(course => ({ name: course.name, term: course.term, credits: course.credits, grade: course.grade, category: course.category })),
+    projects: data.projects.map(project => ({ name: project.name, status: project.status, tags: project.tags })),
+    unlockedAchievements: unlockedAchievements.length,
+  }), [academicSkills, credits.total, data.careerPath, data.courses, data.goals.semestersLeft, data.goals.total, data.projects, data.system, gpa, recommendationPreferences, termGpas, unlockedAchievements.length]);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
   useEffect(() => { window.history.replaceState(null, "", activeView === "dashboard" ? "/" : `/#${activeView}`); }, [activeView]);
@@ -346,6 +397,7 @@ export default function Home() {
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /></>}
             {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
+            <AiPlannerPanel section={activeView} snapshot={aiSnapshot} />
           </div>
         </div>
       </div>
