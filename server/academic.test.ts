@@ -6,9 +6,11 @@ import {
   calculateGpa,
   getAchievements,
   getAcademicSkills,
+  getGradePoint,
   getLevel,
   getTermGpas,
   getXp,
+  prepareTranscriptDraftImport,
   prepareTranscriptImport,
   type CourseRecord,
   type ProjectRecord,
@@ -133,5 +135,44 @@ describe("academic calculations", () => {
     const mapped = prepareTranscriptImport(text, courses, { name: 1, grade: 2, credits: 3, category: 4 });
     expect(mapped.needsMapping).toBe(false);
     expect(mapped.toImport).toEqual([{ term: "未指定", name: "資料庫系統", credits: 3, grade: "A+", category: "elective" }]);
+  });
+
+  it("以所有有效嘗試學分加權 GPA，但只將及格課程計入畢業學分與 XP", () => {
+    const mixedCourses: CourseRecord[] = [
+      { id: "pass", term: "115-1", name: "統計學", credits: 3, grade: "A", category: "required" },
+      { id: "fail", term: "115-1", name: "資料庫系統", credits: 3, grade: "F", category: "elective" },
+    ];
+    expect(calculateGpa(mixedCourses, "4.0")).toBe(2);
+    expect(calculateCredits(mixedCourses)).toEqual({ total: 3, required: 3, elective: 0, general: 0 });
+    expect(getXp(mixedCourses, [])).toBe(getXp([mixedCourses[0]!], []));
+    expect(getGradePoint("A+", "4.3")).toBe(4.3);
+  });
+
+  it("拒絕超出 0–100 的數字成績，並正確將 57 分轉為 D+", () => {
+    const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別\n115-1,及格邊界,3,57,必修\n115-1,無效分數,3,101,選修", []);
+    expect(preview.toImport).toEqual([{ term: "115-1", name: "及格邊界", credits: 3, grade: "D+", category: "required" }]);
+    expect(preview.issues).toHaveLength(1);
+  });
+
+  it("可在確認前重新驗證手動調整的草稿，分開呈現可匯入、重複與無效列", () => {
+    const draft = [
+      { term: "115-1", name: "資料庫系統", credits: 3, grade: "A" as const, category: "elective" as const },
+      { term: "114-1", name: "演算法", credits: 3, grade: "A" as const, category: "required" as const },
+      { term: "115-1", name: "錯誤草稿", credits: 0, grade: "A" as const, category: "elective" as const },
+    ];
+    const preview = prepareTranscriptDraftImport(draft, courses);
+    expect(preview.toImport).toEqual([draft[0]]);
+    expect(preview.duplicates).toEqual([draft[1]]);
+    expect(preview.issues).toHaveLength(1);
+  });
+
+  it("不會將未及格課程視為已完成先修或已取得的職涯能力", () => {
+    const failedProgramming: CourseRecord[] = [
+      { id: "failed-programming", term: "115-1", name: "程式設計", credits: 3, grade: "F", category: "required" },
+    ];
+    const plan = buildCareerRecommendations(failedProgramming, [], { total: 128, required: 60, elective: 42, general: 26, semestersLeft: 4 }, "4.0", "frontend");
+    expect(plan.recommendedCourses.map(course => course.name)).not.toContain("Web 前端實作");
+    expect(plan.lockedCourses.find(course => course.name === "Web 前端實作")?.missingPrerequisites).toEqual(["程式設計"]);
+    expect(plan.skillGaps).toContain("Git");
   });
 });

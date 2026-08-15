@@ -151,10 +151,10 @@ function headerIndex(value: string): TranscriptField | undefined {
   return undefined;
 }
 function transcriptGrade(value: string): LetterGrade | undefined {
-  const normalized = value.trim().toUpperCase().replace("＋", "+").replace("－", "-");
+  const normalized = value.trim().toUpperCase().replaceAll("＋", "+").replaceAll("－", "-");
   if ((gradeOptions as string[]).includes(normalized)) return normalized as LetterGrade;
   const numeric = Number(normalized);
-  if (!Number.isFinite(numeric)) return undefined;
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) return undefined;
   if (numeric >= 90) return "A+";
   if (numeric >= 85) return "A";
   if (numeric >= 80) return "A-";
@@ -164,6 +164,7 @@ function transcriptGrade(value: string): LetterGrade | undefined {
   if (numeric >= 67) return "C+";
   if (numeric >= 63) return "C";
   if (numeric >= 60) return "C-";
+  if (numeric >= 57) return "D+";
   if (numeric >= 50) return "D";
   return "F";
 }
@@ -236,6 +237,29 @@ export function prepareTranscriptImport(text: string, existingCourses: CourseRec
   return { accepted, toImport, duplicates, issues, headers, sample, needsMapping, mapping: resolvedMapping };
 }
 
+/** 重新驗證使用者在匯入預覽中手動調整過的草稿，並重新計算重複列。 */
+export function prepareTranscriptDraftImport(draft: Omit<CourseRecord, "id">[], existingCourses: CourseRecord[]): TranscriptImportPreview {
+  const accepted: Omit<CourseRecord, "id">[] = [];
+  const issues: TranscriptIssue[] = [];
+  draft.forEach((course, index) => {
+    if (!isCountableCourse(course)) {
+      issues.push({ row: index + 1, raw: [course.term, course.name, course.credits, course.grade, course.category].join(","), message: "需要有效的課程名稱、1–12 學分、等第（A+～F）與課程類別。" });
+      return;
+    }
+    accepted.push({ ...course, term: course.term.trim() || "未指定", name: course.name.trim() });
+  });
+  const known = new Set(existingCourses.map(courseKey));
+  const seen = new Set<string>();
+  const toImport: Omit<CourseRecord, "id">[] = [];
+  const duplicates: Omit<CourseRecord, "id">[] = [];
+  accepted.forEach(course => {
+    const key = courseKey(course);
+    if (known.has(key) || seen.has(key)) duplicates.push(course);
+    else { seen.add(key); toImport.push(course); }
+  });
+  return { accepted, toImport, duplicates, issues, needsMapping: false, mapping: {} };
+}
+
 const skillHints: Array<{ match: RegExp; skills: string[] }> = [
   { match: /程式|演算法|軟體|網站|web/i, skills: ["程式邏輯", "Git"] },
   { match: /資料|統計|分析|機器學習/i, skills: ["資料處理", "數據判讀"] },
@@ -246,6 +270,7 @@ const skillHints: Array<{ match: RegExp; skills: string[] }> = [
 export function getAcademicSkills(courses: CourseRecord[]): AcademicSkill[] {
   const counts = new Map<string, { courseCount: number; points: number }>();
   courses.forEach(course => {
+    if (!isCountableCourse(course)) return;
     const gradePoint = getGradePoint(course.grade, "4.0");
     if (gradePoint < 2) return;
     const catalogSkills = courseCatalog.find(item => normalize(item.name) === normalize(course.name))?.skills ?? skillHints.filter(hint => hint.match.test(course.name)).flatMap(hint => hint.skills);
@@ -295,13 +320,35 @@ const gradePoints: Record<GradePointSystem, Record<LetterGrade, number>> = {
 export const gradeOptions = Object.keys(gradePoints["4.0"]) as LetterGrade[];
 
 export function getGradePoint(grade: LetterGrade, system: GradePointSystem) {
-  return gradePoints[system][grade];
+  return gradePoints[system][grade] ?? 0;
+}
+
+function isCourseCategory(value: unknown): value is CourseCategory {
+  return value === "required" || value === "elective" || value === "general";
+}
+
+function isLetterGrade(value: unknown): value is LetterGrade {
+  return typeof value === "string" && (gradeOptions as string[]).includes(value);
+}
+
+function isCountableCourse(course: Pick<CourseRecord, "name" | "credits" | "grade" | "category">): boolean {
+  return Boolean(course.name?.trim())
+    && Number.isFinite(course.credits)
+    && course.credits > 0
+    && course.credits <= 12
+    && isLetterGrade(course.grade)
+    && isCourseCategory(course.category);
+}
+
+function isPassingCourse(course: Pick<CourseRecord, "name" | "credits" | "grade" | "category">): boolean {
+  return isCountableCourse(course) && getGradePoint(course.grade, "4.0") > 0;
 }
 
 export function calculateGpa(courses: CourseRecord[], system: GradePointSystem) {
-  const attemptedCredits = courses.reduce((sum, course) => sum + course.credits, 0);
+  const attemptedCourses = courses.filter(isCountableCourse);
+  const attemptedCredits = attemptedCourses.reduce((sum, course) => sum + course.credits, 0);
   if (attemptedCredits === 0) return 0;
-  const points = courses.reduce(
+  const points = attemptedCourses.reduce(
     (sum, course) => sum + getGradePoint(course.grade, system) * course.credits,
     0,
   );
@@ -310,14 +357,14 @@ export function calculateGpa(courses: CourseRecord[], system: GradePointSystem) 
 
 export function getTermGpas(courses: CourseRecord[], system: GradePointSystem) {
   const grouped = new Map<string, CourseRecord[]>();
-  courses.forEach(course => grouped.set(course.term, [...(grouped.get(course.term) ?? []), course]));
+  courses.filter(isCountableCourse).forEach(course => grouped.set(course.term, [...(grouped.get(course.term) ?? []), course]));
   return Array.from(grouped.entries())
     .map(([term, termCourses]) => ({ term, gpa: calculateGpa(termCourses, system) }))
     .sort((a, b) => a.term.localeCompare(b.term, "zh-Hant"));
 }
 
 export function calculateCredits(courses: CourseRecord[]) {
-  return courses.reduce(
+  return courses.filter(isPassingCourse).reduce(
     (totals, course) => {
       totals.total += course.credits;
       totals[course.category] += course.credits;
@@ -341,7 +388,7 @@ export function getAchievements(courses: CourseRecord[], projects: ProjectRecord
 }
 
 export function getXp(courses: CourseRecord[], projects: ProjectRecord[]) {
-  const courseXp = courses.reduce((sum, course) => sum + course.credits * 16 + getGradePoint(course.grade, "4.0") * 12, 0);
+  const courseXp = courses.filter(isPassingCourse).reduce((sum, course) => sum + course.credits * 16 + getGradePoint(course.grade, "4.0") * 12, 0);
   const projectXp = projects.reduce((sum, project) => sum + (project.status === "done" ? 180 : project.status === "active" ? 60 : 20), 0);
   return Math.round(courseXp + projectXp);
 }
@@ -387,9 +434,9 @@ export function buildCareerRecommendations(
 ) {
   const base = buildRecommendations(courses, goals, system);
   const profile = careerProfiles.find(item => item.id === careerPath) ?? careerProfiles[0];
-  const completedCourseNames = new Set(courses.map(course => normalize(course.name)));
+  const completedCourseNames = new Set(courses.filter(isPassingCourse).map(course => normalize(course.name)));
   const earnedSkills = new Set<string>();
-  courses.forEach(course => {
+  courses.filter(isPassingCourse).forEach(course => {
     courseCatalog.find(item => normalize(item.name) === normalize(course.name))?.skills.forEach(skill => earnedSkills.add(normalize(skill)));
   });
   projects.forEach(project => project.tags.forEach(tag => earnedSkills.add(normalize(tag))));
