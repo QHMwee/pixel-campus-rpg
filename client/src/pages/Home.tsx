@@ -7,6 +7,7 @@ import {
   Compass,
   Crown,
   FolderKanban,
+  FileText,
   GraduationCap,
   Heart,
   Pencil,
@@ -203,9 +204,23 @@ export default function Home() {
   const [transcriptText, setTranscriptText] = useState("");
   const [transcriptPreview, setTranscriptPreview] = useState<TranscriptImportPreview | null>(null);
   const [transcriptMapping, setTranscriptMapping] = useState<TranscriptFieldMap>({});
+  const [pdfConversionNote, setPdfConversionNote] = useState<string | null>(null);
   const [importReport, setImportReport] = useState<{ courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null>(null);
   const mounted = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
+  const pdfConverter = trpc.transcriptPdf.convert.useMutation({
+    onSuccess: (result: { csv: string; summary: string; source: "ai" | "local" }) => {
+      setTranscriptText(result.csv);
+      const preview = prepareTranscriptImport(result.csv, data.courses);
+      setTranscriptMapping(preview.mapping ?? {});
+      setTranscriptPreview(preview);
+      setPdfConversionNote(`${result.source === "ai" ? "AI 已完成 PDF 轉 CSV。" : "已建立 PDF 文字草稿。"} ${result.summary}`);
+    },
+    onError: (error: { message: string }) => {
+      setPdfConversionNote(null);
+      setTranscriptPreview({ accepted: [], toImport: [], duplicates: [], issues: [{ row: 0, message: error.message || "PDF 轉換失敗，請改用 CSV／TSV 或可選取文字的 PDF。", raw: "PDF" }] });
+    },
+  });
 
   const gpa = useMemo(() => calculateGpa(data.courses, data.system), [data.courses, data.system]);
   const credits = useMemo(() => calculateCredits(data.courses), [data.courses]);
@@ -308,6 +323,7 @@ export default function Home() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
+    setPdfConversionNote(null);
     if (file.size > 500_000) {
       setTranscriptPreview({ accepted: [], toImport: [], duplicates: [], issues: [{ row: 0, message: "檔案超過 500 KB，請先匯出精簡的 CSV 或 TSV 成績資料。", raw: file.name }] });
       return;
@@ -322,6 +338,25 @@ export default function Home() {
     };
     reader.onerror = () => setTranscriptPreview({ accepted: [], toImport: [], duplicates: [], issues: [{ row: 0, message: "無法讀取這份檔案，請確認它是 UTF-8 的 CSV、TSV 或純文字檔。", raw: file.name }] });
     reader.readAsText(file);
+  }
+
+  function readTranscriptPdf(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setPdfConversionNote(null);
+    if (file.size > 2_000_000) {
+      setTranscriptPreview({ accepted: [], toImport: [], duplicates: [], issues: [{ row: 0, message: "PDF 超過 2 MB，請先匯出較精簡的文字型成績單。", raw: file.name }] });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result ?? "");
+      const base64 = result.includes(",") ? result.slice(result.indexOf(",") + 1) : result;
+      pdfConverter.mutate({ fileName: file.name, pdfBase64: base64 });
+    };
+    reader.onerror = () => setTranscriptPreview({ accepted: [], toImport: [], duplicates: [], issues: [{ row: 0, message: "無法讀取這份 PDF，請改用 CSV／TSV。", raw: file.name }] });
+    reader.readAsDataURL(file);
   }
 
   function confirmTranscriptImport() {
@@ -403,7 +438,7 @@ export default function Home() {
       </div>
 
       {celebration && <AchievementCelebration achievement={celebration} onClose={() => setCelebration(null)} />}
-      <TranscriptImportDialog open={transcriptOpen} onOpenChange={setTranscriptOpen} text={transcriptText} preview={transcriptPreview} onTextChange={text => { setTranscriptText(text); setTranscriptMapping({}); setTranscriptPreview(null); }} onFileChange={readTranscriptFile} onPreview={() => previewTranscript()} onConfirm={confirmTranscriptImport} />
+      <TranscriptImportDialog open={transcriptOpen} onOpenChange={setTranscriptOpen} text={transcriptText} preview={transcriptPreview} onTextChange={text => { setTranscriptText(text); setTranscriptMapping({}); setTranscriptPreview(null); setPdfConversionNote(null); }} onFileChange={readTranscriptFile} onPdfChange={readTranscriptPdf} isPdfConverting={pdfConverter.isPending} pdfNote={pdfConversionNote} onPreview={() => previewTranscript()} onConfirm={confirmTranscriptImport} />
       {transcriptOpen && transcriptPreview?.needsMapping && <TranscriptMappingWizard open headers={transcriptPreview.headers ?? []} sample={transcriptPreview.sample ?? []} mapping={transcriptMapping} onChange={setTranscriptMapping} onApply={() => previewTranscript(transcriptText, transcriptMapping)} onClose={() => setTranscriptPreview(null)} />}
     </main>
   );
@@ -488,8 +523,8 @@ function TranscriptMappingWizard({ open, headers, sample, mapping, onChange, onA
   return <Dialog open={open} onOpenChange={next => { if (!next) onClose(); }}><DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-4 border-[#a998ff] bg-[#172640] p-0 text-[#e8f0ff] shadow-[7px_7px_0_#080d1f]"><DialogHeader className="border-b-2 border-[#5b719c] px-5 pb-4 pt-5 text-left"><p className="pixel-font text-[8px] leading-5 text-[#c9bcff]">COLUMN MAPPING WIZARD · STEP 1/2</p><DialogTitle className="text-2xl font-black text-[#fff8df]">配對成績單欄位</DialogTitle><DialogDescription className="mt-1 text-sm leading-6 text-[#b8c9e6]">系統無法完全辨識標題列。請將來源欄位配對至學業資料；課程名稱、學分、成績為必填，學期與類別可略過。</DialogDescription></DialogHeader><div className="space-y-5 p-5"><div className="overflow-x-auto border-2 border-[#415a86] bg-[#13213b]"><table className="w-full min-w-[560px] text-left text-xs"><thead className="bg-[#263958] text-[#bfcdea]"><tr>{headers.map((header, index) => <th key={`${header}-${index}`} className="px-3 py-2 font-black">#{index + 1} {header || "（空白標題）"}</th>)}</tr></thead><tbody><tr>{headers.map((_, index) => <td key={index} className="border-t-2 border-[#334b73] px-3 py-2 text-[#d9e5fa]">{sample[index] || "—"}</td>)}</tr></tbody></table></div><div className="grid gap-3 sm:grid-cols-2"><p className="sm:col-span-2 text-xs leading-5 text-[#d6caff]"><b className="text-[#ffe797]">必要：</b>課程名稱、學分、成績。每個來源欄位僅能配對一次。</p>{fields.map(field => <Field key={field} label={`${transcriptFieldLabels[field]}${["name", "credits", "grade"].includes(field) ? "（必要）" : "（選填）"}`}><select value={mapping[field] === undefined ? "none" : String(mapping[field])} onChange={event => { const value = event.target.value; onChange({ ...mapping, [field]: value === "none" ? undefined : Number(value) }); }} className="pixel-input w-full px-3 py-2.5"><option value="none">不對應</option>{headers.map((header, index) => <option key={`${header}-${index}`} value={index}>#{index + 1} · {header || "（空白標題）"}</option>)}</select></Field>)}</div></div><DialogFooter className="border-t-2 border-[#5b719c] px-5 py-4"><PixelButton onClick={onClose} className="bg-[#33486c]"><X size={16} /> 返回修改資料</PixelButton><PixelButton onClick={onApply} className="bg-[#f4c659] text-[#152544]"><ShieldCheck size={16} /> 套用配對並預覽</PixelButton></DialogFooter></DialogContent></Dialog>;
 }
 
-function TranscriptImportDialog({ open, onOpenChange, text, preview, onTextChange, onFileChange, onPreview, onConfirm }: { open: boolean; onOpenChange: (open: boolean) => void; text: string; preview: TranscriptImportPreview | null; onTextChange: (text: string) => void; onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void; onPreview: () => void; onConfirm: () => void }) {
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-4 border-[#f4c659] bg-[#172640] p-0 text-[#e8f0ff] shadow-[7px_7px_0_#080d1f]"><DialogHeader className="border-b-2 border-[#5b719c] px-5 pb-4 pt-5 text-left"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">TRANSCRIPT IMPORT TERMINAL</p><DialogTitle className="text-2xl font-black text-[#fff8df]">匯入成績單</DialogTitle><DialogDescription className="mt-1 max-w-2xl text-sm leading-6 text-[#b8c9e6]">貼上或上傳 CSV／TSV 純文字檔。欄位請使用「學期、課程名稱、學分、成績、類別」；類別可省略，系統會嘗試依課程名稱推斷。資料只會保存在此裝置。</DialogDescription></DialogHeader><div className="space-y-4 p-5"><div className="grid gap-4 lg:grid-cols-[1.15fr_.85fr]"><Field label="貼上成績資料"><textarea value={text} onChange={event => onTextChange(event.target.value)} rows={9} placeholder={"學期,課程名稱,學分,成績,類別\n115-1,統計學,3,A,必修\n115-1,資料庫系統,3,88,選修"} className="pixel-input min-h-48 w-full resize-y px-3 py-3 font-mono text-xs leading-6" /></Field><div className="border-2 border-dashed border-[#637aa4] bg-[#13213b] p-4"><p className="font-black text-[#fff8df]">或上傳文字檔</p><p className="mt-2 text-xs leading-5 text-[#a9bbda]">支援 .csv、.tsv、.txt，最大 500 KB。PDF 與圖片成績單請先由校務系統匯出為表格文字。</p><label className="pixel-button pixel-corners mt-4 inline-flex cursor-pointer items-center gap-2 bg-[#31496f] px-4 py-2 text-sm font-bold text-[#fff8df]"><ScrollText size={16} /> 選擇成績檔<input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain,text/tab-separated-values" onChange={onFileChange} className="sr-only" /></label><div className="mt-5 border-l-4 border-[#a998ff] pl-3 text-xs leading-5 text-[#d7ceff]"><p className="font-black">安全合併規則</p><p className="mt-1">同一學期＋同名課程將標記為重複並略過，不覆蓋既有紀錄。</p></div></div></div>{preview && <div className="border-2 border-[#58709d] bg-[#13213b] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black text-[#fff8df]">解析預覽</p><p className="mt-1 text-xs text-[#aebfdb]">可新增 {preview.toImport.length} 筆 · 略過重複 {preview.duplicates.length} 筆 · 格式問題 {preview.issues.length} 列</p></div><span className="border-2 border-[#74e2b1] bg-[#1d4b44] px-2 py-1 text-xs font-black text-[#c7f7dc]">準備整併</span></div>{preview.toImport.length > 0 && <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[520px] text-left text-sm"><thead className="text-xs text-[#aebfdb]"><tr><th className="pb-2">學期</th><th className="pb-2">課程</th><th className="pb-2">學分</th><th className="pb-2">等第</th><th className="pb-2">類別</th></tr></thead><tbody>{preview.toImport.map(course => <tr key={`${course.term}-${course.name}`} className="border-t-2 border-[#334b73]"><td className="py-2">{course.term}</td><td className="py-2 font-bold text-[#fff8df]">{course.name}</td><td className="py-2">{course.credits}</td><td className="py-2 text-[#ffe797]">{course.grade}</td><td className="py-2">{categoryLabel[course.category]}</td></tr>)}</tbody></table></div>}{preview.duplicates.length > 0 && <p className="mt-3 text-xs leading-5 text-[#e7c984]">已略過重複：{preview.duplicates.map(course => `${course.term} ${course.name}`).join("、")}</p>}{preview.issues.length > 0 && <div className="mt-3 border-l-4 border-[#ee817c] bg-[#4c2b35] p-3 text-xs leading-5 text-[#ffd1cf]">{preview.issues.slice(0, 3).map(issue => <p key={`${issue.row}-${issue.raw}`}>第 {issue.row || "—"} 列：{issue.message}</p>)}</div>}</div>}</div><DialogFooter className="border-t-2 border-[#5b719c] px-5 py-4"><PixelButton onClick={() => onOpenChange(false)} className="bg-[#33486c]"><X size={16} /> 取消</PixelButton>{preview ? <PixelButton onClick={onConfirm} disabled={!preview.toImport.length} className="bg-[#f4c659] text-[#152544]"><ShieldCheck size={16} /> 確認匯入 {preview.toImport.length} 筆</PixelButton> : <PixelButton onClick={onPreview} disabled={!text.trim()} className="bg-[#f4c659] text-[#152544]"><ScrollText size={16} /> 解析成績單</PixelButton>}</DialogFooter></DialogContent></Dialog>;
+function TranscriptImportDialog({ open, onOpenChange, text, preview, onTextChange, onFileChange, onPdfChange, isPdfConverting, pdfNote, onPreview, onConfirm }: { open: boolean; onOpenChange: (open: boolean) => void; text: string; preview: TranscriptImportPreview | null; onTextChange: (text: string) => void; onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void; onPdfChange: (event: React.ChangeEvent<HTMLInputElement>) => void; isPdfConverting: boolean; pdfNote: string | null; onPreview: () => void; onConfirm: () => void }) {
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-4 border-[#f4c659] bg-[#172640] p-0 text-[#e8f0ff] shadow-[7px_7px_0_#080d1f]"><DialogHeader className="border-b-2 border-[#5b719c] px-5 pb-4 pt-5 text-left"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">TRANSCRIPT IMPORT TERMINAL</p><DialogTitle className="text-2xl font-black text-[#fff8df]">匯入成績單</DialogTitle><DialogDescription className="mt-1 max-w-2xl text-sm leading-6 text-[#b8c9e6]">貼上或上傳 CSV／TSV 純文字檔，或將文字型 PDF 交由 AI 轉為可預覽的 CSV。資料只有在你確認匯入後才會寫入此裝置。</DialogDescription></DialogHeader><div className="space-y-4 p-5"><div className="grid gap-4 lg:grid-cols-[1.15fr_.85fr]"><Field label="貼上成績資料"><textarea value={text} onChange={event => onTextChange(event.target.value)} rows={9} placeholder={"學期,課程名稱,學分,成績,類別\n115-1,統計學,3,A,必修\n115-1,資料庫系統,3,88,選修"} className="pixel-input min-h-48 w-full resize-y px-3 py-3 font-mono text-xs leading-6" /></Field><div className="space-y-3"><div className="border-2 border-dashed border-[#637aa4] bg-[#13213b] p-4"><p className="font-black text-[#fff8df]">上傳 CSV／TSV 文字檔</p><p className="mt-2 text-xs leading-5 text-[#a9bbda]">支援 .csv、.tsv、.txt，最大 500 KB。</p><label className="pixel-button pixel-corners mt-4 inline-flex cursor-pointer items-center gap-2 bg-[#31496f] px-4 py-2 text-sm font-bold text-[#fff8df]"><ScrollText size={16} /> 選擇文字檔<input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain,text/tab-separated-values" onChange={onFileChange} className="sr-only" /></label></div><div className="border-2 border-dashed border-[#a998ff] bg-[#1b2446] p-4"><p className="font-black text-[#fff8df]">AI PDF → CSV 轉換</p><p className="mt-2 text-xs leading-5 text-[#cfc7f5]">支援可選取文字的 PDF，最大 2 MB。按下後會暫時傳送 PDF 至伺服器擷取文字，再交由 AI 整理為 CSV；不會自動寫入成績，也不保留原始檔。</p><label className={`pixel-button pixel-corners mt-4 inline-flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-bold ${isPdfConverting ? "cursor-wait bg-[#4c427b] text-[#ded6ff]" : "bg-[#5a48b9] text-[#fff8df]"}`}><FileText size={16} /> {isPdfConverting ? "AI 轉換中…" : "選擇 PDF 成績單"}<input type="file" accept=".pdf,application/pdf" disabled={isPdfConverting} onChange={onPdfChange} className="sr-only" /></label></div><div className="border-l-4 border-[#a998ff] pl-3 text-xs leading-5 text-[#d7ceff]"><p className="font-black">安全合併規則</p><p className="mt-1">同一學期＋同名課程將標記為重複並略過，不覆蓋既有紀錄。</p></div></div></div>{pdfNote && <div className="border-2 border-[#9c8df1] bg-[#332e65] p-3 text-xs leading-5 text-[#e4dfff]"><b className="text-[#fff2ad]">PDF 轉換結果：</b>{pdfNote}</div>}{preview && <div className="border-2 border-[#58709d] bg-[#13213b] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black text-[#fff8df]">解析預覽</p><p className="mt-1 text-xs text-[#aebfdb]">可新增 {preview.toImport.length} 筆 · 略過重複 {preview.duplicates.length} 筆 · 格式問題 {preview.issues.length} 列</p></div><span className="border-2 border-[#74e2b1] bg-[#1d4b44] px-2 py-1 text-xs font-black text-[#c7f7dc]">準備整併</span></div>{preview.toImport.length > 0 && <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[520px] text-left text-sm"><thead className="text-xs text-[#aebfdb]"><tr><th className="pb-2">學期</th><th className="pb-2">課程</th><th className="pb-2">學分</th><th className="pb-2">等第</th><th className="pb-2">類別</th></tr></thead><tbody>{preview.toImport.map(course => <tr key={`${course.term}-${course.name}`} className="border-t-2 border-[#334b73]"><td className="py-2">{course.term}</td><td className="py-2 font-bold text-[#fff8df]">{course.name}</td><td className="py-2">{course.credits}</td><td className="py-2 text-[#ffe797]">{course.grade}</td><td className="py-2">{categoryLabel[course.category]}</td></tr>)}</tbody></table></div>}{preview.duplicates.length > 0 && <p className="mt-3 text-xs leading-5 text-[#e7c984]">已略過重複：{preview.duplicates.map(course => `${course.term} ${course.name}`).join("、")}</p>}{preview.issues.length > 0 && <div className="mt-3 border-l-4 border-[#ee817c] bg-[#4c2b35] p-3 text-xs leading-5 text-[#ffd1cf]">{preview.issues.slice(0, 3).map(issue => <p key={`${issue.row}-${issue.raw}`}>第 {issue.row || "—"} 列：{issue.message}</p>)}</div>}</div>}</div><DialogFooter className="border-t-2 border-[#5b719c] px-5 py-4"><PixelButton onClick={() => onOpenChange(false)} className="bg-[#33486c]"><X size={16} /> 取消</PixelButton>{preview ? <PixelButton onClick={onConfirm} disabled={!preview.toImport.length} className="bg-[#f4c659] text-[#152544]"><ShieldCheck size={16} /> 確認匯入 {preview.toImport.length} 筆</PixelButton> : <PixelButton onClick={onPreview} disabled={!text.trim() || isPdfConverting} className="bg-[#f4c659] text-[#152544]"><ScrollText size={16} /> 解析成績單</PixelButton>}</DialogFooter></DialogContent></Dialog>;
 }
 
 function CreditsView({ credits, goals, showEditor, setShowEditor, onGoalChange }: { credits: ReturnType<typeof calculateCredits>; goals: GraduationGoals; showEditor: boolean; setShowEditor: (show: boolean) => void; onGoalChange: (key: keyof GraduationGoals, value: number) => void }) {
