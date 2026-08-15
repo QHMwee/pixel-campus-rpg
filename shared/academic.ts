@@ -109,11 +109,18 @@ export const courseCatalog: CourseCatalogEntry[] = [
 ];
 
 export type TranscriptIssue = { row: number; message: string; raw: string };
+export type TranscriptField = "term" | "name" | "credits" | "grade" | "category";
+export type TranscriptFieldMap = Partial<Record<TranscriptField, number>>;
+export const transcriptFieldLabels: Record<TranscriptField, string> = { term: "學期", name: "課程名稱", credits: "學分", grade: "成績", category: "課程類別" };
 export type TranscriptImportPreview = {
   accepted: Omit<CourseRecord, "id">[];
   toImport: Omit<CourseRecord, "id">[];
   duplicates: Omit<CourseRecord, "id">[];
   issues: TranscriptIssue[];
+  headers?: string[];
+  sample?: string[];
+  needsMapping?: boolean;
+  mapping?: TranscriptFieldMap;
 };
 export type AcademicSkill = { name: string; courseCount: number; points: number; tier: "developing" | "proficient" | "mastered" };
 
@@ -134,7 +141,7 @@ function parseDelimitedRow(line: string, delimiter: string) {
 }
 
 function transcriptDelimiter(line: string) { return line.includes("\t") ? "\t" : ","; }
-function headerIndex(value: string) {
+function headerIndex(value: string): TranscriptField | undefined {
   const normalized = normalize(value).replace(/[\s_\-]/g, "");
   if (["學期", "term", "semester"].includes(normalized)) return "term";
   if (["課程名稱", "課名", "course", "coursename", "subject"].includes(normalized)) return "name";
@@ -169,37 +176,54 @@ function transcriptCategory(value: string | undefined, name: string): CourseCate
 }
 function courseKey(course: Pick<CourseRecord, "term" | "name">) { return `${normalize(course.term)}::${normalize(course.name)}`; }
 
-/** 解析 CSV 或 TSV 文字；支援標題列或 term,name,credits,grade,category 的固定欄位順序。 */
-export function parseTranscript(text: string) {
+/** 解析 CSV 或 TSV 文字；可使用 mapping 對應任意標題欄位。 */
+export function parseTranscript(text: string, mapping?: TranscriptFieldMap) {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
   const accepted: Omit<CourseRecord, "id">[] = [];
   const issues: TranscriptIssue[] = [];
-  if (!lines.length) return { accepted, issues: [{ row: 0, message: "請貼上至少一筆成績資料。", raw: "" }] };
+  if (!lines.length) return { accepted, issues: [{ row: 0, message: "請貼上至少一筆成績資料。", raw: "" }], headers: [], sample: [], needsMapping: false, mapping: {} };
   const delimiter = transcriptDelimiter(lines[0]);
   const firstRow = parseDelimitedRow(lines[0], delimiter);
   const mappedHeaders = firstRow.map(headerIndex);
-  const hasHeader = mappedHeaders.some(Boolean);
-  const columns: Record<string, number> = hasHeader
-    ? Object.fromEntries(mappedHeaders.map((key, index) => key ? [key, index] : []).filter((entry): entry is [string, number] => Boolean(entry[0])))
+  const looksLikeData = firstRow.length >= 4 && Number.isFinite(Number(firstRow[2])) && Boolean(transcriptGrade(firstRow[3] ?? ""));
+  const hasHeader = mappedHeaders.some(Boolean) || !looksLikeData;
+  const detectedColumns: TranscriptFieldMap = hasHeader
+    ? Object.fromEntries(mappedHeaders.map((key, index) => key ? [key, index] : []).filter((entry): entry is [TranscriptField, number] => Boolean(entry[0])))
     : { term: 0, name: 1, credits: 2, grade: 3, category: 4 };
+  const columns: TranscriptFieldMap = { ...detectedColumns, ...(mapping ?? {}) };
+  const headers = hasHeader ? firstRow : ["欄位 1", "欄位 2", "欄位 3", "欄位 4", "欄位 5"];
+  const sample = hasHeader ? (lines[1] ? parseDelimitedRow(lines[1], delimiter) : []) : firstRow;
+  const missingRequired = (["name", "credits", "grade"] as TranscriptField[]).filter(field => columns[field] === undefined);
+  const mappedIndexes = Object.entries(columns).filter((entry): entry is [TranscriptField, number] => Number.isInteger(entry[1])).map(([, index]) => index);
+  const hasDuplicateMapping = new Set(mappedIndexes).size !== mappedIndexes.length;
+  if (missingRequired.length || hasDuplicateMapping) {
+    const reason = hasDuplicateMapping ? "同一來源欄位不能對應到多個目標欄位。" : `請指定必要欄位：${missingRequired.map(field => transcriptFieldLabels[field]).join("、")}。`;
+    issues.push({ row: 1, message: reason, raw: lines[0] });
+    return { accepted, issues, headers, sample, needsMapping: hasHeader, mapping: columns };
+  }
+  const nameIndex = columns.name!;
+  const creditsIndex = columns.credits!;
+  const gradeIndex = columns.grade!;
+  const termIndex = columns.term;
+  const categoryIndex = columns.category;
   const start = hasHeader ? 1 : 0;
   for (let index = start; index < lines.length; index += 1) {
     const row = parseDelimitedRow(lines[index], delimiter);
-    const name = row[columns.name] ?? "";
-    const term = row[columns.term] ?? "未指定";
-    const credits = Number(row[columns.credits]);
-    const grade = transcriptGrade(row[columns.grade] ?? "");
+    const name = row[nameIndex] ?? "";
+    const term = termIndex === undefined ? "未指定" : row[termIndex] ?? "未指定";
+    const credits = Number(row[creditsIndex]);
+    const grade = transcriptGrade(row[gradeIndex] ?? "");
     if (!name.trim() || !Number.isFinite(credits) || credits <= 0 || credits > 12 || !grade) {
       issues.push({ row: index + 1, raw: lines[index], message: "需要有效的課程名稱、1–12 學分與等第（A+～F 或 0–100 分）。" });
       continue;
     }
-    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: transcriptCategory(row[columns.category], name) });
+    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: transcriptCategory(categoryIndex === undefined ? undefined : row[categoryIndex], name) });
   }
-  return { accepted, issues };
+  return { accepted, issues, headers, sample, needsMapping: false, mapping: columns };
 }
 
-export function prepareTranscriptImport(text: string, existingCourses: CourseRecord[]): TranscriptImportPreview {
-  const { accepted, issues } = parseTranscript(text);
+export function prepareTranscriptImport(text: string, existingCourses: CourseRecord[], mapping?: TranscriptFieldMap): TranscriptImportPreview {
+  const { accepted, issues, headers, sample, needsMapping, mapping: resolvedMapping } = parseTranscript(text, mapping);
   const known = new Set(existingCourses.map(courseKey));
   const seen = new Set<string>();
   const toImport: Omit<CourseRecord, "id">[] = [];
@@ -209,7 +233,7 @@ export function prepareTranscriptImport(text: string, existingCourses: CourseRec
     if (known.has(key) || seen.has(key)) duplicates.push(course);
     else { seen.add(key); toImport.push(course); }
   });
-  return { accepted, toImport, duplicates, issues };
+  return { accepted, toImport, duplicates, issues, headers, sample, needsMapping, mapping: resolvedMapping };
 }
 
 const skillHints: Array<{ match: RegExp; skills: string[] }> = [

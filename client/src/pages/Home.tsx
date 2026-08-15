@@ -35,6 +35,7 @@ import {
   getXp,
   gradeOptions,
   prepareTranscriptImport,
+  transcriptFieldLabels,
   type CourseCategory,
   type CourseRecord,
   type CareerPath,
@@ -45,6 +46,8 @@ import {
   type ProjectStatus,
   type RecommendationPreferences,
   type TranscriptImportPreview,
+  type TranscriptField,
+  type TranscriptFieldMap,
 } from "@shared/academic";
 
 type View = "dashboard" | "grades" | "credits" | "quest" | "projects" | "badges";
@@ -162,6 +165,7 @@ export default function Home() {
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [transcriptText, setTranscriptText] = useState("");
   const [transcriptPreview, setTranscriptPreview] = useState<TranscriptImportPreview | null>(null);
+  const [transcriptMapping, setTranscriptMapping] = useState<TranscriptFieldMap>({});
   const [importReport, setImportReport] = useState<{ courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null>(null);
   const mounted = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
@@ -243,8 +247,10 @@ export default function Home() {
     setData(current => ({ ...current, goals: { ...current.goals, [key]: Math.max(0, value) } }));
   }
 
-  function previewTranscript(text = transcriptText) {
-    setTranscriptPreview(prepareTranscriptImport(text, data.courses));
+  function previewTranscript(text = transcriptText, mapping = transcriptMapping) {
+    const preview = prepareTranscriptImport(text, data.courses, mapping);
+    setTranscriptPreview(preview);
+    if (preview.needsMapping) setTranscriptMapping(preview.mapping ?? {});
   }
 
   function readTranscriptFile(event: React.ChangeEvent<HTMLInputElement>) {
@@ -259,7 +265,9 @@ export default function Home() {
     reader.onload = () => {
       const text = String(reader.result ?? "");
       setTranscriptText(text);
-      setTranscriptPreview(prepareTranscriptImport(text, data.courses));
+      const preview = prepareTranscriptImport(text, data.courses);
+      setTranscriptMapping(preview.mapping ?? {});
+      setTranscriptPreview(preview);
     };
     reader.onerror = () => setTranscriptPreview({ accepted: [], toImport: [], duplicates: [], issues: [{ row: 0, message: "無法讀取這份檔案，請確認它是 UTF-8 的 CSV、TSV 或純文字檔。", raw: file.name }] });
     reader.readAsText(file);
@@ -343,7 +351,8 @@ export default function Home() {
       </div>
 
       {celebration && <AchievementCelebration achievement={celebration} onClose={() => setCelebration(null)} />}
-      <TranscriptImportDialog open={transcriptOpen} onOpenChange={setTranscriptOpen} text={transcriptText} preview={transcriptPreview} onTextChange={text => { setTranscriptText(text); setTranscriptPreview(null); }} onFileChange={readTranscriptFile} onPreview={() => previewTranscript()} onConfirm={confirmTranscriptImport} />
+      <TranscriptImportDialog open={transcriptOpen} onOpenChange={setTranscriptOpen} text={transcriptText} preview={transcriptPreview} onTextChange={text => { setTranscriptText(text); setTranscriptMapping({}); setTranscriptPreview(null); }} onFileChange={readTranscriptFile} onPreview={() => previewTranscript()} onConfirm={confirmTranscriptImport} />
+      {transcriptOpen && transcriptPreview?.needsMapping && <TranscriptMappingWizard open headers={transcriptPreview.headers ?? []} sample={transcriptPreview.sample ?? []} mapping={transcriptMapping} onChange={setTranscriptMapping} onApply={() => previewTranscript(transcriptText, transcriptMapping)} onClose={() => setTranscriptPreview(null)} />}
     </main>
   );
 }
@@ -420,6 +429,11 @@ function GradesView({ courses, system, gpa, termGpas, courseForm, editingCourseI
 
 function CourseEditor({ form, editing, setForm, onSave, onCancel }: { form: Omit<CourseRecord, "id"> | null; editing: boolean; setForm: React.Dispatch<React.SetStateAction<Omit<CourseRecord, "id"> | null>>; onSave: () => void; onCancel: () => void }) {
   return <Panel className="h-fit overflow-hidden 2xl:sticky 2xl:top-5"><PanelTitle eyebrow="COURSE EDITOR" title={form ? editing ? "編輯課程" : "新增課程" : "準備書寫"} action={<BookOpen className="text-[#f4c659]" />} /><div className="p-5">{!form ? <EmptyState icon={<Plus />} title="新增一則紀錄" detail="將每一次修課成果收入卷軸，GPA 與學分進度會自動更新。" /> : <div className="space-y-4"><Field label="課程名稱"><input value={form.name} onChange={event => setForm(current => current && { ...current, name: event.target.value })} placeholder="例如：演算法" className="pixel-input w-full px-3 py-2.5" /></Field><div className="grid grid-cols-2 gap-3"><Field label="學期"><input value={form.term} onChange={event => setForm(current => current && { ...current, term: event.target.value })} placeholder="114-2" className="pixel-input w-full px-3 py-2.5" /></Field><Field label="學分"><input type="number" min="1" max="12" value={form.credits} onChange={event => setForm(current => current && { ...current, credits: Number(event.target.value) })} className="pixel-input w-full px-3 py-2.5" /></Field></div><div className="grid grid-cols-2 gap-3"><Field label="成績等第"><select value={form.grade} onChange={event => setForm(current => current && { ...current, grade: event.target.value as LetterGrade })} className="pixel-input w-full px-3 py-2.5">{gradeOptions.map(grade => <option key={grade}>{grade}</option>)}</select></Field><Field label="課程類別"><select value={form.category} onChange={event => setForm(current => current && { ...current, category: event.target.value as CourseCategory })} className="pixel-input w-full px-3 py-2.5">{Object.entries(categoryLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field></div><div className="flex gap-3 pt-2"><PixelButton onClick={onSave} disabled={!form.name.trim() || !form.term.trim()} className="flex-1 bg-[#f4c659] text-[#162442]"><ShieldCheck size={16} /> 儲存紀錄</PixelButton><PixelButton onClick={onCancel} className="bg-[#33486c]"><X size={16} /></PixelButton></div></div>}</div></Panel>;
+}
+
+function TranscriptMappingWizard({ open, headers, sample, mapping, onChange, onApply, onClose }: { open: boolean; headers: string[]; sample: string[]; mapping: TranscriptFieldMap; onChange: (mapping: TranscriptFieldMap) => void; onApply: () => void; onClose: () => void }) {
+  const fields: TranscriptField[] = ["term", "name", "credits", "grade", "category"];
+  return <Dialog open={open} onOpenChange={next => { if (!next) onClose(); }}><DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-4 border-[#a998ff] bg-[#172640] p-0 text-[#e8f0ff] shadow-[7px_7px_0_#080d1f]"><DialogHeader className="border-b-2 border-[#5b719c] px-5 pb-4 pt-5 text-left"><p className="pixel-font text-[8px] leading-5 text-[#c9bcff]">COLUMN MAPPING WIZARD · STEP 1/2</p><DialogTitle className="text-2xl font-black text-[#fff8df]">配對成績單欄位</DialogTitle><DialogDescription className="mt-1 text-sm leading-6 text-[#b8c9e6]">系統無法完全辨識標題列。請將來源欄位配對至學業資料；課程名稱、學分、成績為必填，學期與類別可略過。</DialogDescription></DialogHeader><div className="space-y-5 p-5"><div className="overflow-x-auto border-2 border-[#415a86] bg-[#13213b]"><table className="w-full min-w-[560px] text-left text-xs"><thead className="bg-[#263958] text-[#bfcdea]"><tr>{headers.map((header, index) => <th key={`${header}-${index}`} className="px-3 py-2 font-black">#{index + 1} {header || "（空白標題）"}</th>)}</tr></thead><tbody><tr>{headers.map((_, index) => <td key={index} className="border-t-2 border-[#334b73] px-3 py-2 text-[#d9e5fa]">{sample[index] || "—"}</td>)}</tr></tbody></table></div><div className="grid gap-3 sm:grid-cols-2"><p className="sm:col-span-2 text-xs leading-5 text-[#d6caff]"><b className="text-[#ffe797]">必要：</b>課程名稱、學分、成績。每個來源欄位僅能配對一次。</p>{fields.map(field => <Field key={field} label={`${transcriptFieldLabels[field]}${["name", "credits", "grade"].includes(field) ? "（必要）" : "（選填）"}`}><select value={mapping[field] === undefined ? "none" : String(mapping[field])} onChange={event => { const value = event.target.value; onChange({ ...mapping, [field]: value === "none" ? undefined : Number(value) }); }} className="pixel-input w-full px-3 py-2.5"><option value="none">不對應</option>{headers.map((header, index) => <option key={`${header}-${index}`} value={index}>#{index + 1} · {header || "（空白標題）"}</option>)}</select></Field>)}</div></div><DialogFooter className="border-t-2 border-[#5b719c] px-5 py-4"><PixelButton onClick={onClose} className="bg-[#33486c]"><X size={16} /> 返回修改資料</PixelButton><PixelButton onClick={onApply} className="bg-[#f4c659] text-[#152544]"><ShieldCheck size={16} /> 套用配對並預覽</PixelButton></DialogFooter></DialogContent></Dialog>;
 }
 
 function TranscriptImportDialog({ open, onOpenChange, text, preview, onTextChange, onFileChange, onPreview, onConfirm }: { open: boolean; onOpenChange: (open: boolean) => void; text: string; preview: TranscriptImportPreview | null; onTextChange: (text: string) => void; onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void; onPreview: () => void; onConfirm: () => void }) {

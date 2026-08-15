@@ -124,4 +124,14 @@ describe("academic calculations", () => {
     expect(getLevel(afterXp).level).toBeGreaterThan(getLevel(beforeXp).level);
     expect(getAcademicSkills([...courses, ...importedCourses]).find(skill => skill.name === "資料處理")).toMatchObject({ tier: "proficient" });
   });
+
+  it("能為未識別標題套用手動欄位對應並完成解析", () => {
+    const text = "流水號\t科目\t分數\t點數\t學程分類\n001\t資料庫系統\t91\t3\t選修";
+    const withoutMapping = prepareTranscriptImport(text, courses);
+    expect(withoutMapping.needsMapping).toBe(true);
+    expect(withoutMapping.headers).toEqual(["流水號", "科目", "分數", "點數", "學程分類"]);
+    const mapped = prepareTranscriptImport(text, courses, { name: 1, grade: 2, credits: 3, category: 4 });
+    expect(mapped.needsMapping).toBe(false);
+    expect(mapped.toImport).toEqual([{ term: "未指定", name: "資料庫系統", credits: 3, grade: "A+", category: "elective" }]);
+  });
 });
