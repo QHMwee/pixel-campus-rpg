@@ -152,6 +152,15 @@ export function buildCoursePlanCsv(courses: CoursePlanExportEntry[]) {
   return `\uFEFF${[header, ...rows].map(row => row.map(escapeCsvCell).join(",")).join("\r\n")}\r\n`;
 }
 
+export function buildNotionCoursePlanCsv(courses: CoursePlanExportEntry[]) {
+  const header = ["課程名稱", "學期", "學分", "課程類別", "優先程度", "Campus Quest 狀態", "來源", "同步鍵", "戰略備註", "學期提醒"];
+  const rows = getExportablePlanCourses(courses).map(course => {
+    const reminderDate = getPlanDate(course.term)?.toISOString().slice(0, 10) ?? "";
+    return [course.name.trim(), course.term.trim(), course.credits, planCategoryLabels[course.category], planPriorityLabels[course.priority], "規劃中", "Campus Quest", `cq:${course.id}`, "由 Campus Quest 四年課程規劃匯出；完成選課或取得成績後請在 Notion 更新狀態。", reminderDate];
+  });
+  return `\uFEFF${[header, ...rows].map(row => row.map(escapeCsvCell).join(",")).join("\r\n")}\r\n`;
+}
+
 function getPlanDate(term: string) {
   const matched = term.trim().match(/^(\d{3,4})\s*[-/]\s*([12])$/);
   if (!matched) return null;

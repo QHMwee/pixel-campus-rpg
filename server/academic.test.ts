@@ -4,6 +4,7 @@ import {
   buildCareerRecommendations,
   buildCoursePlanCalendar,
   buildCoursePlanCsv,
+  buildNotionCoursePlanCsv,
   calculateCredits,
   calculatePlannedCredits,
   calculateGpa,
@@ -240,5 +241,16 @@ describe("academic calculations", () => {
     expect(calendar).toContain("SUMMARY:課程規劃：統計學");
     expect(calendar).not.toContain("探索課");
     expect(calendar).toContain("END:VCALENDAR");
+  });
+
+  it("可匯出對應 Notion 四年規劃資料庫的合併 CSV 與同步鍵", () => {
+    const csv = buildNotionCoursePlanCsv([
+      { id: "plan-notion", term: "115-1", name: "統計學", credits: 3, category: "required", priority: "must" },
+    ]);
+    expect(csv).toContain('"課程名稱","學期","學分","課程類別"');
+    expect(csv).toContain('"Campus Quest"');
+    expect(csv).toContain('"cq:plan-notion"');
+    expect(csv).toContain('"2026-08-01"');
+    expect(csv).toContain('"規劃中"');
   });
 });
