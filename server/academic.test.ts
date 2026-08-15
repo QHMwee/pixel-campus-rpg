@@ -3,7 +3,10 @@ import {
   buildRecommendations,
   buildCareerRecommendations,
   calculateCredits,
+  calculatePlannedCredits,
   calculateGpa,
+  createBlankAcademicStart,
+  getCreditPlanStatus,
   getAchievements,
   getAcademicSkills,
   getGradePoint,
@@ -12,6 +15,7 @@ import {
   getXp,
   prepareTranscriptDraftImport,
   prepareTranscriptImport,
+  resolveInitialAcademicView,
   type CourseRecord,
   type ProjectRecord,
 } from "../shared/academic";
@@ -174,5 +178,35 @@ describe("academic calculations", () => {
     expect(plan.recommendedCourses.map(course => course.name)).not.toContain("Web 前端實作");
     expect(plan.lockedCourses.find(course => course.name === "Web 前端實作")?.missingPrerequisites).toEqual(["程式設計"]);
     expect(plan.skillGaps).toContain("Git");
+  });
+
+  it("會將課程規劃表中的預計修課納入職涯建議與人性化摘要", () => {
+    const completed: CourseRecord[] = [
+      { id: "programming", term: "115-1", name: "程式設計", credits: 3, grade: "A", category: "required" },
+    ];
+    const plan = buildCareerRecommendations(completed, [], { total: 128, required: 60, elective: 42, general: 26, semestersLeft: 4 }, "4.3", "frontend", { workload: "balanced", category: "any", projectStyle: "individual" }, ["Web 前端實作"]);
+    expect(plan.recommendedCourses.find(course => course.name === "Web 前端實作")?.score).toBeGreaterThan(100);
+    expect(plan.planningContext).toContain("1 門課");
+    expect(plan.goal).toContain("規劃");
+  });
+
+  it("空白起始不含示範資料、固定使用 4.3 制，並導向課程規劃頁", () => {
+    expect(createBlankAcademicStart()).toEqual({ system: "4.3", courses: [], projects: [] });
+    expect(resolveInitialAcademicView("", false, ["plan", "dashboard"])).toBe("plan");
+    expect(resolveInitialAcademicView("", true, ["plan", "dashboard"])).toBe("dashboard");
+    expect(resolveInitialAcademicView("dashboard", false, ["plan", "dashboard"])).toBe("dashboard");
+  });
+
+  it("將規劃學分與已完成學分分開計算，並回報規劃後的缺口", () => {
+    const completed = calculateCredits([{ id: "done", term: "115-1", name: "已修必修", credits: 3, grade: "A", category: "required" }]);
+    const planned = calculatePlannedCredits([
+      { credits: 3, category: "required" },
+      { credits: 2, category: "general" },
+      { credits: 0, category: "elective" },
+    ]);
+    expect(planned).toEqual({ total: 5, required: 3, elective: 0, general: 2 });
+    const status = getCreditPlanStatus(completed, planned, { total: 10, required: 6, elective: 2, general: 2, semestersLeft: 4 });
+    expect(status.find(row => row.category === "total")).toMatchObject({ completedCredits: 3, plannedCredits: 5, remainingAfterPlan: 2 });
+    expect(status.find(row => row.category === "required")).toMatchObject({ completedCredits: 3, plannedCredits: 3, remainingAfterPlan: 0 });
   });
 });

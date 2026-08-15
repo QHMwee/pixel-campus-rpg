@@ -124,6 +124,19 @@ export type TranscriptImportPreview = {
 };
 export type AcademicSkill = { name: string; courseCount: number; points: number; tier: "developing" | "proficient" | "mastered" };
 
+export function createBlankAcademicStart() {
+  return {
+    system: "4.3" as const,
+    courses: [] as CourseRecord[],
+    projects: [] as ProjectRecord[],
+  };
+}
+
+export function resolveInitialAcademicView(requestedView: string, hasCompletedPlanIntro: boolean, supportedViews: readonly string[]) {
+  if (supportedViews.includes(requestedView)) return requestedView;
+  return hasCompletedPlanIntro ? "dashboard" : "plan";
+}
+
 function parseDelimitedRow(line: string, delimiter: string) {
   const values: string[] = [];
   let current = "";
@@ -374,6 +387,35 @@ export function calculateCredits(courses: CourseRecord[]) {
   );
 }
 
+/** 預計修課只用於規劃對照，不會被視為已完成學分或影響 GPA。 */
+export function calculatePlannedCredits(courses: Array<Pick<CourseRecord, "credits" | "category">>) {
+  return courses.reduce(
+    (totals, course) => {
+      if (!Number.isFinite(course.credits) || course.credits <= 0 || course.credits > 12) return totals;
+      totals.total += course.credits;
+      totals[course.category] += course.credits;
+      return totals;
+    },
+    { total: 0, required: 0, elective: 0, general: 0 },
+  );
+}
+
+export function getCreditPlanStatus(completed: ReturnType<typeof calculateCredits>, planned: ReturnType<typeof calculatePlannedCredits>, goals: GraduationGoals) {
+  const categories: Array<"total" | CourseCategory> = ["total", "required", "elective", "general"];
+  return categories.map(category => {
+    const target = goals[category === "total" ? "total" : category];
+    const completedCredits = completed[category];
+    const plannedCredits = planned[category];
+    return {
+      category,
+      target,
+      completedCredits,
+      plannedCredits,
+      remainingAfterPlan: Math.max(0, target - completedCredits - plannedCredits),
+    };
+  });
+}
+
 export function getAchievements(courses: CourseRecord[], projects: ProjectRecord[], system: GradePointSystem): Achievement[] {
   const gpa = calculateGpa(courses, system);
   const credits = calculateCredits(courses);
@@ -431,10 +473,12 @@ export function buildCareerRecommendations(
   system: GradePointSystem,
   careerPath: CareerPath,
   preferences: RecommendationPreferences = defaultRecommendationPreferences,
+  plannedCourseNames: string[] = [],
 ) {
   const base = buildRecommendations(courses, goals, system);
   const profile = careerProfiles.find(item => item.id === careerPath) ?? careerProfiles[0];
   const completedCourseNames = new Set(courses.filter(isPassingCourse).map(course => normalize(course.name)));
+  const plannedNames = new Set(plannedCourseNames.map(normalize).filter(Boolean));
   const earnedSkills = new Set<string>();
   courses.filter(isPassingCourse).forEach(course => {
     courseCatalog.find(item => normalize(item.name) === normalize(course.name))?.skills.forEach(skill => earnedSkills.add(normalize(skill)));
@@ -449,7 +493,8 @@ export function buildCareerRecommendations(
       const missingPrerequisites = course.prerequisites.filter(item => !completedCourseNames.has(normalize(item)));
       const skillBoost = course.skills.filter(skill => skillGaps.some(gap => normalize(gap) === normalize(skill))).length * 8;
       const categoryBoost = preferences.category === "any" || course.category === preferences.category ? 12 : 0;
-      const score = course.careerFit[careerPath] + skillBoost + careerCreditGap + categoryBoost + (missingPrerequisites.length === 0 ? 10 : 0);
+      const planBoost = plannedNames.has(normalize(course.name)) ? 18 : 0;
+      const score = course.careerFit[careerPath] + skillBoost + careerCreditGap + categoryBoost + planBoost + (missingPrerequisites.length === 0 ? 10 : 0);
       return { ...course, score, missingPrerequisites, unlocked: missingPrerequisites.length === 0 };
     });
 
@@ -464,10 +509,12 @@ export function buildCareerRecommendations(
 
   return {
     ...base,
+    goal: plannedNames.size ? `${base.goal} 你已先列入規劃的課程也會被優先檢視，讓接下來的安排更貼近你的想法。` : base.goal,
     profile,
     skillGaps,
     readiness,
     suggestedCredits,
+    planningContext: plannedNames.size ? `已優先參考你規劃表中的 ${plannedNames.size} 門課；若它們符合先修條件與職涯方向，會在建議中優先顯示。` : "先在課程規劃表寫下想修的課，系統就能把它們納入選課建議。",
     recommendedCourses,
     lockedCourses,
     projectSuggestion: {

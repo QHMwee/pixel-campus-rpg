@@ -28,18 +28,22 @@ import { trpc } from "@/lib/trpc";
 import {
   buildCareerRecommendations,
   calculateCredits,
+  calculatePlannedCredits,
   careerProfiles,
+  createBlankAcademicStart,
   defaultRecommendationPreferences,
   calculateGpa,
   getAchievements,
   getAcademicSkills,
   getGradePoint,
   getLevel,
+  getCreditPlanStatus,
   getTermGpas,
   getXp,
   gradeOptions,
   prepareTranscriptImport,
   prepareTranscriptDraftImport,
+  resolveInitialAcademicView,
   transcriptFieldLabels,
   type CourseCategory,
   type CourseRecord,
@@ -55,7 +59,16 @@ import {
   type TranscriptFieldMap,
 } from "@shared/academic";
 
-type View = "dashboard" | "grades" | "credits" | "quest" | "projects" | "badges";
+type View = "plan" | "dashboard" | "grades" | "credits" | "quest" | "projects" | "badges";
+
+type PlannedCourse = {
+  id: string;
+  term: string;
+  name: string;
+  credits: number;
+  category: CourseCategory;
+  priority: "must" | "important" | "explore";
+};
 
 type QuestData = {
   courses: CourseRecord[];
@@ -64,9 +77,11 @@ type QuestData = {
   system: GradePointSystem;
   careerPath: CareerPath;
   preferences: RecommendationPreferences;
+  plannedCourses: PlannedCourse[];
+  hasCompletedPlanIntro: boolean;
 };
 
-type AiPlanningSection = View;
+type AiPlanningSection = Exclude<View, "plan">;
 type AiPlannerSnapshot = {
   gpa: number;
   gpaSystem: GradePointSystem;
@@ -84,25 +99,18 @@ type AiPlannerSnapshot = {
 type AiAdvice = { title: string; overview: string; focus: string; actions: { label: string; reason: string; urgency: "now" | "next" | "later" }[]; caution: string };
 
 const STORAGE_KEY = "campus-quest-save-v1";
+const legacyDemoCourseIds = new Set(["c1", "c2", "c3", "c4", "c5"]);
+const legacyDemoProjectIds = new Set(["p1", "p2"]);
 
 const initialGoals: GraduationGoals = { total: 128, required: 60, elective: 42, general: 26, semestersLeft: 4 };
 
-const seedData: QuestData = {
-  system: "4.0",
+const emptyQuestData: QuestData = {
+  ...createBlankAcademicStart(),
   careerPath: "frontend",
   preferences: defaultRecommendationPreferences,
   goals: initialGoals,
-  courses: [
-    { id: "c1", term: "113-2", name: "程式設計", credits: 3, grade: "A", category: "required" },
-    { id: "c2", term: "113-2", name: "數位敘事", credits: 2, grade: "A-", category: "general" },
-    { id: "c3", term: "114-1", name: "資料結構", credits: 3, grade: "A+", category: "required" },
-    { id: "c4", term: "114-1", name: "互動設計", credits: 3, grade: "A", category: "elective" },
-    { id: "c5", term: "114-1", name: "英文簡報", credits: 2, grade: "B+", category: "general" },
-  ],
-  projects: [
-    { id: "p1", name: "校園尋寶地圖", description: "以互動網頁設計校園導覽任務，讓新生透過闖關認識校園。", tags: ["React", "UX", "Map"], startDate: "2025-09", endDate: "2025-12", status: "done" },
-    { id: "p2", name: "綠色食堂儀表板", description: "分析校園餐廳供餐資料，設計可視化儀表板與減碳提醒。", tags: ["Data Viz", "Figma"], startDate: "2026-02", endDate: "2026-06", status: "active" },
-  ],
+  plannedCourses: [],
+  hasCompletedPlanIntro: false,
 };
 
 const categoryLabel: Record<CourseCategory, string> = { required: "必修", elective: "選修", general: "通識" };
@@ -111,6 +119,7 @@ const categoryTone: Record<CourseCategory, string> = { required: "bg-[#f4c659] t
 const statusTone: Record<ProjectStatus, string> = { planning: "bg-[#687b9e]", active: "bg-[#6c55d9]", done: "bg-[#3b9a74]" };
 
 const navItems: { id: View; label: string; icon: typeof Compass }[] = [
+  { id: "plan", label: "課程規劃", icon: BookOpen },
   { id: "dashboard", label: "冒險總覽", icon: Compass },
   { id: "grades", label: "成績卷軸", icon: ScrollText },
   { id: "credits", label: "學分地圖", icon: Target },
@@ -121,26 +130,29 @@ const navItems: { id: View; label: string; icon: typeof Compass }[] = [
 
 const emptyCourse = (): Omit<CourseRecord, "id"> => ({ term: "114-2", name: "", credits: 3, grade: "A", category: "required" });
 const emptyProject = (): Omit<ProjectRecord, "id"> => ({ name: "", description: "", tags: [], startDate: "2026-02", endDate: "2026-06", status: "planning" });
+const emptyPlannedCourse = (): PlannedCourse => ({ id: crypto.randomUUID(), term: "", name: "", credits: 3, category: "required", priority: "must" });
 
 function loadData(): QuestData {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return seedData;
+    if (!saved) return emptyQuestData;
     const parsed = JSON.parse(saved) as Partial<QuestData>;
     return {
-      courses: Array.isArray(parsed.courses) ? parsed.courses : seedData.courses,
-      projects: Array.isArray(parsed.projects) ? parsed.projects : seedData.projects,
+      courses: Array.isArray(parsed.courses) ? parsed.courses.filter(course => !legacyDemoCourseIds.has(course.id)) : [],
+      projects: Array.isArray(parsed.projects) ? parsed.projects.filter(project => !legacyDemoProjectIds.has(project.id)) : [],
       goals: { ...initialGoals, ...(parsed.goals ?? {}) },
-      system: parsed.system === "4.3" ? "4.3" : "4.0",
+      system: "4.3",
       careerPath: careerProfiles.some(profile => profile.id === parsed.careerPath) ? parsed.careerPath as CareerPath : "frontend",
       preferences: {
         workload: parsed.preferences?.workload === "light" || parsed.preferences?.workload === "ambitious" ? parsed.preferences.workload : defaultRecommendationPreferences.workload,
         category: parsed.preferences?.category === "required" || parsed.preferences?.category === "elective" || parsed.preferences?.category === "general" ? parsed.preferences.category : defaultRecommendationPreferences.category,
         projectStyle: parsed.preferences?.projectStyle === "team" || parsed.preferences?.projectStyle === "research" ? parsed.preferences.projectStyle : defaultRecommendationPreferences.projectStyle,
       },
+      plannedCourses: Array.isArray(parsed.plannedCourses) ? parsed.plannedCourses.filter((course): course is PlannedCourse => Boolean(course && typeof course.name === "string" && typeof course.term === "string" && Number.isFinite(course.credits) && (course.category === "required" || course.category === "elective" || course.category === "general") && (course.priority === "must" || course.priority === "important" || course.priority === "explore"))) : [],
+      hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
     };
   } catch {
-    return seedData;
+    return emptyQuestData;
   }
 }
 
@@ -172,6 +184,18 @@ function PreferenceControls({ preferences, onChange }: { preferences: Recommenda
   return <Panel className="mb-4 overflow-hidden animate-pop-in"><PanelTitle eyebrow="RECOMMENDATION PREFERENCES" title="推薦偏好設定" action={<WandSparkles className="text-[#f4c659]" />} /><div className="grid gap-3 p-4 md:grid-cols-3"><Field label="本學期負荷"><select value={preferences.workload} onChange={event => onChange({ ...preferences, workload: event.target.value as RecommendationPreferences["workload"] })} className="pixel-input w-full px-3 py-2.5"><option value="light">輕量 12–14 學分</option><option value="balanced">平衡 15–18 學分</option><option value="ambitious">挑戰 18+ 學分</option></select></Field><Field label="偏好課程類別"><select value={preferences.category} onChange={event => onChange({ ...preferences, category: event.target.value as RecommendationPreferences["category"] })} className="pixel-input w-full px-3 py-2.5"><option value="any">不限類別</option><option value="required">必修優先</option><option value="elective">選修優先</option><option value="general">通識優先</option></select></Field><Field label="專題取向"><select value={preferences.projectStyle} onChange={event => onChange({ ...preferences, projectStyle: event.target.value as RecommendationPreferences["projectStyle"] })} className="pixel-input w-full px-3 py-2.5"><option value="individual">個人作品集</option><option value="team">團隊協作</option><option value="research">研究／競賽</option></select></Field></div></Panel>;
 }
 
+function CoursePlanView({ courses, completedCredits, plannedCredits, plannedRequiredCredits, goals, onAdd, onUpdate, onRemove, onComplete }: { courses: PlannedCourse[]; completedCredits: number; plannedCredits: number; plannedRequiredCredits: number; goals: GraduationGoals; onAdd: () => void; onUpdate: (id: string, patch: Partial<PlannedCourse>) => void; onRemove: (id: string) => void; onComplete: () => void }) {
+  const priorityLabel: Record<PlannedCourse["priority"], string> = { must: "一定要修", important: "很想安排", explore: "還在考慮" };
+  const priorityTone: Record<PlannedCourse["priority"], string> = { must: "border-[#f4c659] bg-[#594a28] text-[#ffe797]", important: "border-[#74e2b1] bg-[#24534a] text-[#c7f7dc]", explore: "border-[#a998ff] bg-[#473d82] text-[#e7dfff]" };
+  const remainingTarget = Math.max(0, goals.total - completedCredits);
+  return <div className="space-y-4 animate-pop-in">
+    <Panel gold className="overflow-hidden"><div className="grid gap-5 p-5 sm:p-7 lg:grid-cols-[auto_minmax(0,1fr)]"><span className="crest mx-auto flex h-16 w-16 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[4px_4px_0_#080d1f] lg:mx-0"><BookOpen size={31} /></span><div><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">FIRST STEP · YOUR COURSE PLAN</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">先把你心中的課表寫下來</h2><p className="mt-3 max-w-3xl text-sm leading-7 text-[#c9d7ee]">不用一次把大學四年排得很完整。先從你已知道、最想修，或覺得不能錯過的課開始；之後可以隨時回來修改。這份規劃只是一張幫你思考的地圖，不會被當成已完成的成績或學分。</p></div></div></Panel>
+    <div className="grid gap-4 md:grid-cols-3"><SmallMetric label="已完成學分" value={`${completedCredits}`} /><SmallMetric label="目前規劃學分" value={`${plannedCredits}`} /><SmallMetric label="規劃中的必修" value={`${plannedRequiredCredits}`} /></div>
+    <Panel className="overflow-hidden"><PanelTitle eyebrow="COURSE PLAN TABLE" title="我的修課規劃" action={<PixelButton onClick={onAdd} className="bg-[#f4c659] text-[#152544]"><Plus size={16} /> 加入一門課</PixelButton>} /><div className="p-4 sm:p-5">{courses.length === 0 ? <EmptyState icon={<BookOpen />} title="先從下一門想修的課開始" detail="例如填入下一學期的必修、想探索的選修，或只是暫時放進來比較的課。這裡沒有標準答案。" action={onAdd} /> : <><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-sm"><thead className="text-xs text-[#9caed0]"><tr><th className="pb-2 pl-2">預計學期</th><th className="pb-2">課程名稱</th><th className="pb-2 text-center">學分</th><th className="pb-2">類別</th><th className="pb-2">優先程度</th><th className="pb-2 text-right">操作</th></tr></thead><tbody>{courses.map(course => <tr key={course.id} className="border-t-2 border-[#334b73]"><td className="py-2 pl-2 pr-2"><input aria-label={`${course.name || "新課程"}的預計學期`} value={course.term} onChange={event => onUpdate(course.id, { term: event.target.value })} placeholder="例如：115-1" className="pixel-input w-28 px-2 py-2 text-xs" /></td><td className="py-2 pr-2"><input aria-label="課程名稱" value={course.name} onChange={event => onUpdate(course.id, { name: event.target.value })} placeholder="例如：統計學" className="pixel-input w-full min-w-48 px-2 py-2 text-xs" /></td><td className="py-2 pr-2 text-center"><input aria-label="預估學分" type="number" min="1" max="12" step="0.5" value={course.credits} onChange={event => onUpdate(course.id, { credits: Number(event.target.value) })} className="pixel-input w-20 px-2 py-2 text-center text-xs" /></td><td className="py-2 pr-2"><select aria-label="課程類別" value={course.category} onChange={event => onUpdate(course.id, { category: event.target.value as CourseCategory })} className="pixel-input w-24 px-2 py-2 text-xs">{Object.entries(categoryLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 pr-2"><select aria-label="優先程度" value={course.priority} onChange={event => onUpdate(course.id, { priority: event.target.value as PlannedCourse["priority"] })} className="pixel-input w-32 px-2 py-2 text-xs">{Object.entries(priorityLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 text-right"><button onClick={() => onRemove(course.id)} className="p-2 text-[#b9c8e6] hover:text-[#f28682]" aria-label={`移除 ${course.name || "這門課"}`}><Trash2 size={16} /></button></td></tr>)}</tbody></table></div><div className="mt-4 flex flex-wrap gap-2">{courses.map(course => <span key={`${course.id}-badge`} className={`border px-2 py-1 text-xs font-black ${priorityTone[course.priority]}`}>{course.name.trim() || "尚未命名的課程"} · {priorityLabel[course.priority]}</span>)}</div></>}</div></Panel>
+    <Panel className="overflow-hidden"><div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-[#fff8df]">你離畢業目標還有 {remainingTarget} 學分。</p><p className="mt-2 max-w-2xl text-sm leading-6 text-[#b8c9e4]">完成這一步後，系統會把你的規劃放進總覽與選課建議中。沒有填完也沒關係，未來每次選課前都可以回來補充。</p></div><PixelButton onClick={onComplete} className="shrink-0 bg-[#5a48b9]"><ShieldCheck size={16} /> {courses.length ? "帶著規劃前往總覽" : "先看看我的總覽"}</PixelButton></div></Panel>
+  </div>;
+}
+
 function AiPlannerPanel({ section, snapshot }: { section: AiPlanningSection; snapshot: AiPlannerSnapshot }) {
   const [advice, setAdvice] = useState<AiAdvice | null>(null);
   const advisor = trpc.aiPlanner.generate.useMutation({ onSuccess: result => setAdvice(result.advice) });
@@ -195,7 +219,7 @@ export default function Home() {
   const [data, setData] = useState<QuestData>(loadData);
   const [activeView, setActiveView] = useState<View>(() => {
     const requested = window.location.hash.replace("#", "") as View;
-    return navItems.some(item => item.id === requested) ? requested : "dashboard";
+    return resolveInitialAcademicView(requested, data.hasCompletedPlanIntro, navItems.map(item => item.id)) as View;
   });
   const [courseForm, setCourseForm] = useState<Omit<CourseRecord, "id"> | null>(null);
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
@@ -236,8 +260,12 @@ export default function Home() {
   const level = useMemo(() => getLevel(xp), [xp]);
   const academicSkills = useMemo(() => getAcademicSkills(data.courses), [data.courses]);
   const recommendationPreferences = data.preferences ?? defaultRecommendationPreferences;
-  const recommendations = useMemo(() => buildCareerRecommendations(data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences), [data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences]);
+  const recommendations = useMemo(() => buildCareerRecommendations(data.courses, data.projects, data.goals, data.system, data.careerPath, recommendationPreferences, data.plannedCourses.map(course => course.name)), [data.courses, data.projects, data.goals, data.system, data.careerPath, data.plannedCourses, recommendationPreferences]);
   const completedProjects = data.projects.filter(project => project.status === "done").length;
+  const plannedCreditBreakdown = useMemo(() => calculatePlannedCredits(data.plannedCourses), [data.plannedCourses]);
+  const plannedCredits = plannedCreditBreakdown.total;
+  const plannedRequiredCredits = plannedCreditBreakdown.required;
+  const creditPlanStatus = useMemo(() => getCreditPlanStatus(credits, plannedCreditBreakdown, data.goals), [credits, data.goals, plannedCreditBreakdown]);
   const aiSnapshot = useMemo<AiPlannerSnapshot>(() => ({
     gpa,
     gpaSystem: data.system,
@@ -272,12 +300,29 @@ export default function Home() {
   }, [achievements, unlockedAchievements]);
 
   function resetQuest() {
-    if (window.confirm("確定要重置所有本機紀錄並載入示範資料嗎？")) {
-      setData(seedData);
-      setActiveView("dashboard");
+    if (window.confirm("確定要清除這台裝置上的課程、成績與專題紀錄，重新開始規劃嗎？")) {
+      setData(emptyQuestData);
+      setActiveView("plan");
       setCourseForm(null);
       setProjectForm(null);
     }
+  }
+
+  function addPlannedCourse() {
+    setData(current => ({ ...current, plannedCourses: [...current.plannedCourses, emptyPlannedCourse()] }));
+  }
+
+  function updatePlannedCourse(id: string, patch: Partial<PlannedCourse>) {
+    setData(current => ({ ...current, plannedCourses: current.plannedCourses.map(course => course.id === id ? { ...course, ...patch } : course) }));
+  }
+
+  function removePlannedCourse(id: string) {
+    setData(current => ({ ...current, plannedCourses: current.plannedCourses.filter(course => course.id !== id) }));
+  }
+
+  function completePlanIntro() {
+    setData(current => ({ ...current, hasCompletedPlanIntro: true }));
+    setActiveView("dashboard");
   }
 
   function saveCourse() {
@@ -403,7 +448,7 @@ export default function Home() {
     <main className="min-h-screen overflow-x-hidden pb-10">
       <div className="mx-auto max-w-[1600px] px-3 py-3 sm:px-5 lg:px-7 lg:py-6">
         <header className="pixel-panel scanline flex flex-col gap-4 bg-[#17243f] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <button onClick={() => setActiveView("dashboard")} className="flex items-center gap-3 text-left" aria-label="前往冒險總覽">
+          <button onClick={() => setActiveView(data.hasCompletedPlanIntro ? "dashboard" : "plan")} className="flex items-center gap-3 text-left" aria-label="前往主要頁面">
             <span className="crest flex h-12 w-12 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[3px_3px_0_#080d1f]"><GraduationCap size={27} strokeWidth={2.8} /></span>
             <span>
               <span className="pixel-font block text-[10px] leading-6 text-[#f4c659]">CAMPUS QUEST</span>
@@ -434,7 +479,7 @@ export default function Home() {
             </nav>
             <div className="mt-4 border-t-2 border-[#4b628e] px-3 pt-4">
               <p className="pixel-font text-[8px] leading-5 text-[#93a7cb]">GAME SYSTEM</p>
-              <button onClick={resetQuest} className="mt-2 text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#f4c659]">重置為示範資料</button>
+              <button onClick={resetQuest} className="mt-2 text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#f4c659]">清除本機資料，重新開始</button>
             </div>
           </aside>
 
@@ -444,19 +489,17 @@ export default function Home() {
                 <p className="pixel-font text-[8px] leading-5 text-[#8194bb]">COMMAND WINDOW</p>
                 <h1 className="text-2xl font-extrabold tracking-wide text-[#fff8df] sm:text-3xl">{currentTitle}</h1>
               </div>
-              <div className="flex items-center gap-2 rounded-sm border-2 border-[#526995] bg-[#192844] p-1.5">
-                <span className="px-2 text-xs font-bold text-[#b9c8e4]">GPA 制</span>
-                {(["4.0", "4.3"] as GradePointSystem[]).map(system => <button key={system} onClick={() => setData(current => ({ ...current, system }))} className={`pixel-button px-2.5 py-1.5 text-xs ${data.system === system ? "border-[#f4c659] bg-[#f4c659] text-[#152544]" : "bg-[#31496f]"}`}>{system}</button>)}
-              </div>
+              <div className="border-2 border-[#526995] bg-[#192844] px-3 py-2 text-xs font-bold text-[#d8e4fb]">GPA 計算採用 <b className="ml-1 text-[#f4c659]">4.3 制</b></div>
             </div>
 
+            {activeView === "plan" && <CoursePlanView courses={data.plannedCourses} completedCredits={credits.total} plannedCredits={plannedCredits} plannedRequiredCredits={plannedRequiredCredits} goals={data.goals} onAdd={addPlannedCourse} onUpdate={updatePlannedCourse} onRemove={removePlannedCourse} onComplete={completePlanIntro} />}
             {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} skills={academicSkills} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={setActiveView} />}
             {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
-            {activeView === "credits" && <CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} />}
+            {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /></>}
             {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
-            <AiPlannerPanel section={activeView} snapshot={aiSnapshot} />
+            <AiPlannerPanel section={activeView === "plan" ? "dashboard" : activeView} snapshot={aiSnapshot} />
           </div>
         </div>
       </div>
@@ -549,6 +592,11 @@ function TranscriptMappingWizard({ open, headers, sample, mapping, onChange, onA
 
 function TranscriptImportDialog({ open, onOpenChange, text, preview, onTextChange, onFileChange, onPdfChange, isPdfConverting, pdfNote, onPreview, onConfirm }: { open: boolean; onOpenChange: (open: boolean) => void; text: string; preview: TranscriptImportPreview | null; onTextChange: (text: string) => void; onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void; onPdfChange: (event: React.ChangeEvent<HTMLInputElement>) => void; isPdfConverting: boolean; pdfNote: string | null; onPreview: () => void; onConfirm: () => void }) {
   return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto border-4 border-[#f4c659] bg-[#172640] p-0 text-[#e8f0ff] shadow-[7px_7px_0_#080d1f]"><DialogHeader className="border-b-2 border-[#5b719c] px-5 pb-4 pt-5 text-left"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">TRANSCRIPT IMPORT TERMINAL</p><DialogTitle className="text-2xl font-black text-[#fff8df]">匯入成績單</DialogTitle><DialogDescription className="mt-1 max-w-2xl text-sm leading-6 text-[#b8c9e6]">貼上或上傳 CSV／TSV 純文字檔，或將文字型 PDF 交由 AI 轉為可預覽的 CSV。資料只有在你確認匯入後才會寫入此裝置。</DialogDescription></DialogHeader><div className="space-y-4 p-5"><div className="grid gap-4 lg:grid-cols-[1.15fr_.85fr]"><Field label="貼上成績資料"><textarea value={text} onChange={event => onTextChange(event.target.value)} rows={9} placeholder={"學期,課程名稱,學分,成績,類別\n115-1,統計學,3,A,必修\n115-1,資料庫系統,3,88,選修"} className="pixel-input min-h-48 w-full resize-y px-3 py-3 font-mono text-xs leading-6" /></Field><div className="space-y-3"><div className="border-2 border-dashed border-[#637aa4] bg-[#13213b] p-4"><p className="font-black text-[#fff8df]">上傳 CSV／TSV 文字檔</p><p className="mt-2 text-xs leading-5 text-[#a9bbda]">支援 .csv、.tsv、.txt，最大 500 KB。</p><label className="pixel-button pixel-corners mt-4 inline-flex cursor-pointer items-center gap-2 bg-[#31496f] px-4 py-2 text-sm font-bold text-[#fff8df]"><ScrollText size={16} /> 選擇文字檔<input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain,text/tab-separated-values" onChange={onFileChange} className="sr-only" /></label></div><div className="border-2 border-dashed border-[#a998ff] bg-[#1b2446] p-4"><p className="font-black text-[#fff8df]">AI PDF → CSV 轉換</p><p className="mt-2 text-xs leading-5 text-[#cfc7f5]">支援可選取文字的 PDF，最大 2 MB。按下後會暫時傳送 PDF 至伺服器擷取文字，再交由 AI 整理為 CSV；不會自動寫入成績，也不保留原始檔。</p><label className={`pixel-button pixel-corners mt-4 inline-flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-bold ${isPdfConverting ? "cursor-wait bg-[#4c427b] text-[#ded6ff]" : "bg-[#5a48b9] text-[#fff8df]"}`}><FileText size={16} /> {isPdfConverting ? "AI 轉換中…" : "選擇 PDF 成績單"}<input type="file" accept=".pdf,application/pdf" disabled={isPdfConverting} onChange={onPdfChange} className="sr-only" /></label></div><div className="border-l-4 border-[#a998ff] pl-3 text-xs leading-5 text-[#d7ceff]"><p className="font-black">安全合併規則</p><p className="mt-1">同一學期＋同名課程將標記為重複並略過，不覆蓋既有紀錄。</p></div></div></div>{pdfNote && <div className="border-2 border-[#9c8df1] bg-[#332e65] p-3 text-xs leading-5 text-[#e4dfff]"><b className="text-[#fff2ad]">PDF 轉換結果：</b>{pdfNote}</div>}{preview && <div className="border-2 border-[#58709d] bg-[#13213b] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-black text-[#fff8df]">解析預覽</p><p className="mt-1 text-xs text-[#aebfdb]">可新增 {preview.toImport.length} 筆 · 略過重複 {preview.duplicates.length} 筆 · 格式問題 {preview.issues.length} 列</p></div><span className="border-2 border-[#74e2b1] bg-[#1d4b44] px-2 py-1 text-xs font-black text-[#c7f7dc]">準備整併</span></div>{preview.toImport.length > 0 && <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[520px] text-left text-sm"><thead className="text-xs text-[#aebfdb]"><tr><th className="pb-2">學期</th><th className="pb-2">課程</th><th className="pb-2">學分</th><th className="pb-2">等第</th><th className="pb-2">類別</th></tr></thead><tbody>{preview.toImport.map(course => <tr key={`${course.term}-${course.name}`} className="border-t-2 border-[#334b73]"><td className="py-2">{course.term}</td><td className="py-2 font-bold text-[#fff8df]">{course.name}</td><td className="py-2">{course.credits}</td><td className="py-2 text-[#ffe797]">{course.grade}</td><td className="py-2">{categoryLabel[course.category]}</td></tr>)}</tbody></table></div>}{preview.duplicates.length > 0 && <p className="mt-3 text-xs leading-5 text-[#e7c984]">已略過重複：{preview.duplicates.map(course => `${course.term} ${course.name}`).join("、")}</p>}{preview.issues.length > 0 && <div className="mt-3 border-l-4 border-[#ee817c] bg-[#4c2b35] p-3 text-xs leading-5 text-[#ffd1cf]">{preview.issues.slice(0, 3).map(issue => <p key={`${issue.row}-${issue.raw}`}>第 {issue.row || "—"} 列：{issue.message}</p>)}</div>}</div>}</div><DialogFooter className="border-t-2 border-[#5b719c] px-5 py-4"><PixelButton onClick={() => onOpenChange(false)} className="bg-[#33486c]"><X size={16} /> 取消</PixelButton>{preview ? <PixelButton onClick={onConfirm} disabled={!preview.toImport.length} className="bg-[#f4c659] text-[#152544]"><ShieldCheck size={16} /> 確認匯入 {preview.toImport.length} 筆</PixelButton> : <PixelButton onClick={onPreview} disabled={!text.trim() || isPdfConverting} className="bg-[#f4c659] text-[#152544]"><ScrollText size={16} /> 解析成績單</PixelButton>}</DialogFooter></DialogContent></Dialog>;
+}
+
+function CreditPlanningSummary({ status }: { status: ReturnType<typeof getCreditPlanStatus> }) {
+  const labels: Record<(typeof status)[number]["category"], string> = { total: "畢業總學分", required: "必修", elective: "選修", general: "通識" };
+  return <Panel gold className="mb-4 overflow-hidden animate-pop-in"><PanelTitle eyebrow="PLAN VS. PROGRESS" title="規劃與實際進度" action={<BookOpen className="text-[#f4c659]" />} /><div className="p-5"><p className="max-w-3xl text-sm leading-7 text-[#c8d7ec]">這裡會把你已完成的學分與課程規劃表中的預計學分分開看。規劃能幫你估算缺口，但不會被當作已修學分，也不會影響 GPA。</p><div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{status.map(row => <div key={row.category} className="border-2 border-[#4d638d] bg-[#15233f] p-3"><p className="font-black text-[#fff8df]">{labels[row.category]}</p><p className="mt-2 text-xs text-[#9fb2d2]">已完成 <b className="text-[#74e2b1]">{row.completedCredits}</b> · 規劃中 <b className="text-[#f4c659]">{row.plannedCredits}</b></p><p className="mt-2 text-sm font-black text-[#dce8ff]">規劃後尚差 <span className="text-[#f4c659]">{row.remainingAfterPlan}</span> 學分</p></div>)}</div></div></Panel>;
 }
 
 function CreditsView({ credits, goals, showEditor, setShowEditor, onGoalChange }: { credits: ReturnType<typeof calculateCredits>; goals: GraduationGoals; showEditor: boolean; setShowEditor: (show: boolean) => void; onGoalChange: (key: keyof GraduationGoals, value: number) => void }) {
