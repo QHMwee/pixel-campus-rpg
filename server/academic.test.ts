@@ -9,12 +9,14 @@ import {
   buildNkustTimetableTemplate,
   buildNotionCoursePlanCsv,
   calculateCredits,
+  calculateNumericAverage,
   createCourseEditorDraft,
   calculatePlannedCredits,
   calculateGpa,
   createBlankAcademicStart,
   getCreditPlanStatus,
   getCreditRecognitionSummary,
+  getGeneralCreditRecognition,
   getCalendarReadyPlanCourses,
   getAchievements,
   getAcademicSkills,
@@ -22,9 +24,11 @@ import {
   getGradePoint,
   getLevel,
   getTermGpas,
+  getTermNumericAverages,
   getXp,
   migrateCceeCommonRequiredCourses,
   migrateUndeclaredRequiredCourses,
+  normalizeTermRanks,
   prepareTranscriptDraftImport,
   prepareTranscriptImport,
   prepareNkustTimetableDraftImport,
@@ -40,7 +44,7 @@ import {
 
 const courses: CourseRecord[] = [
   { id: "1", term: "114-1", name: "演算法", credits: 3, grade: "A+", category: "required" },
-  { id: "2", term: "114-1", name: "設計思考", credits: 2, grade: "B+", category: "general" },
+  { id: "2", term: "114-1", name: "博雅(社會)設計思考", credits: 2, grade: "B+", category: "general" },
   { id: "3", term: "114-2", name: "互動程式", credits: 3, grade: "A", category: "elective" },
 ];
 
@@ -56,6 +60,38 @@ describe("academic calculations", () => {
 
   it("會按課程類別累積已修學分", () => {
     expect(calculateCredits(courses)).toEqual({ total: 8, required: 3, elective: 3, general: 2, common: 0, "undeclared-required": 0 });
+  });
+
+  it("博雅超額不能補足校訂，超額通識仍保留在 GPA 與數字平均", () => {
+    const generalCourses: CourseRecord[] = [
+      { id: "required", term: "115-1", name: "系必修", credits: 3, grade: "A", numericScore: 92, category: "required" },
+      { id: "general-a", term: "115-1", name: "博雅(社會)A", credits: 10, grade: "A+", numericScore: 96, category: "general" },
+      { id: "general-b", term: "115-2", name: "博雅(科技)B", credits: 8, grade: "B+", numericScore: 80, category: "general" },
+    ];
+    expect(getGeneralCreditRecognition(generalCourses)).toEqual({ attemptedCredits: 18, recognizedCredits: 14, excessCredits: 4 });
+    expect(calculateCredits(generalCourses)).toEqual({ total: 17, required: 3, elective: 0, general: 14, common: 0, "undeclared-required": 0 });
+    expect(calculateGpa(generalCourses, "4.3")).toBe(3.88);
+    expect(calculateNumericAverage(generalCourses)).toBe(89.33);
+    expect(getCcee114CommonEducationProgress(generalCourses).map(row => ({ id: row.id, credits: row.credits }))).toEqual([
+      { id: "chinese", credits: 0 },
+      { id: "english", credits: 0 },
+      { id: "liberal", credits: 14 },
+      { id: "school", credits: 0 },
+    ]);
+  });
+
+  it("只以已輸入的百分制成績計算數字平均，並按學期分組", () => {
+    const scoredCourses: CourseRecord[] = [
+      { id: "score-a", term: "114-1", name: "數字一", credits: 3, grade: "A", numericScore: 90, category: "required" },
+      { id: "score-b", term: "114-1", name: "數字二", credits: 1, grade: "B", numericScore: 80, category: "elective" },
+      { id: "letter-only", term: "114-2", name: "只有等第", credits: 3, grade: "A+", category: "general" },
+    ];
+    expect(calculateNumericAverage(scoredCourses)).toBe(87.5);
+    expect(getTermNumericAverages(scoredCourses)).toEqual([{ term: "114-1", average: 87.5 }]);
+  });
+
+  it("只保留有效的官方學期排名，不自行產生不存在的名次", () => {
+    expect(normalizeTermRanks({ "114-1": { rank: 5, cohortSize: 82 }, "114-2": { rank: 0, cohortSize: 60 }, invalid: { rank: 12, cohortSize: 8 } })).toEqual({ "114-1": { rank: 5, cohortSize: 82 } });
   });
 
   it("在條件達成時解鎖專題與學術成就，並產生可執行建議", () => {
@@ -119,7 +155,7 @@ describe("academic calculations", () => {
 
   it("能解析成績單、略過重複課程並從匯入課程推導能力標籤", () => {
     const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別\n114-1,演算法,3,A+,必修\n115-1,統計學,3,88,必修\n115-1,錯誤資料,0,A,選修", courses);
-    expect(preview.toImport).toEqual([{ term: "115-1", name: "統計學", credits: 3, grade: "A", category: "required" }]);
+    expect(preview.toImport).toEqual([{ term: "115-1", name: "統計學", credits: 3, grade: "A", numericScore: 88, category: "required" }]);
     expect(preview.duplicates).toHaveLength(1);
     expect(preview.issues).toHaveLength(1);
     expect(getAcademicSkills([...courses, ...preview.toImport.map((course, index) => ({ ...course, id: `import-${index}` }))]).map(skill => skill.name)).toEqual(expect.arrayContaining(["統計", "數據判讀"]));
@@ -129,8 +165,8 @@ describe("academic calculations", () => {
     const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別,畢業認列\n114-1,微積分(一),3,90,必修,外系已認列\n114-1,資料科學,3,100,選修,待確認認列", []);
     expect(preview.issues).toHaveLength(0);
     expect(preview.toImport).toEqual([
-      { term: "114-1", name: "微積分(一)", credits: 3, grade: "A+", category: "required", recognition: "approved-external" },
-      { term: "114-1", name: "資料科學", credits: 3, grade: "A+", category: "elective", recognition: "pending" },
+      { term: "114-1", name: "微積分(一)", credits: 3, grade: "A+", numericScore: 90, category: "required", recognition: "approved-external" },
+      { term: "114-1", name: "資料科學", credits: 3, grade: "A+", numericScore: 100, category: "elective", recognition: "pending" },
     ]);
     const imported = preview.toImport.map((course, index) => ({ ...course, id: `recognized-${index}` }));
     expect(calculateCredits(imported)).toEqual({ total: 3, required: 3, elective: 0, general: 0, common: 0, "undeclared-required": 0 });
@@ -167,13 +203,13 @@ describe("academic calculations", () => {
     expect(withoutMapping.headers).toEqual(["流水號", "科目", "分數", "點數", "學程分類"]);
     const mapped = prepareTranscriptImport(text, courses, { name: 1, grade: 2, credits: 3, category: 4 });
     expect(mapped.needsMapping).toBe(false);
-    expect(mapped.toImport).toEqual([{ term: "未指定", name: "資料庫系統", credits: 3, grade: "A+", category: "elective" }]);
+    expect(mapped.toImport).toEqual([{ term: "未指定", name: "資料庫系統", credits: 3, grade: "A+", numericScore: 91, category: "elective" }]);
   });
 
   it("可手動對應非標準畢業認列欄位，並保留外系已認列狀態", () => {
     const text = "學程,科目,分數,點數,分類,審核結果\n114-1,資料探勘,95,3,選修,外系已認列";
     const mapped = prepareTranscriptImport(text, [], { term: 0, name: 1, grade: 2, credits: 3, category: 4, recognition: 5 });
-    expect(mapped.toImport).toEqual([{ term: "114-1", name: "資料探勘", credits: 3, grade: "A+", category: "elective", recognition: "approved-external" }]);
+    expect(mapped.toImport).toEqual([{ term: "114-1", name: "資料探勘", credits: 3, grade: "A+", numericScore: 95, category: "elective", recognition: "approved-external" }]);
   });
 
   it("成績編輯草稿會保留既有認列狀態，並將舊版僅計 GPA 正規化", () => {
@@ -214,7 +250,7 @@ describe("academic calculations", () => {
 
   it("會將舊有僅計 GPA CSV 輸入統一轉為不分系必修，且完全不增加電通系畢業學分", () => {
     const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別,畢業認列\n114-1,不分系探索課,3,88,選修,不分系課程（僅計 GPA）", []);
-    expect(preview.toImport).toEqual([{ term: "114-1", name: "不分系探索課", credits: 3, grade: "A", category: "undeclared-required" }]);
+    expect(preview.toImport).toEqual([{ term: "114-1", name: "不分系探索課", credits: 3, grade: "A", numericScore: 88, category: "undeclared-required" }]);
     const imported = preview.toImport.map((course, index) => ({ ...course, id: `undeclared-${index}` }));
     expect(calculateGpa(imported, "4.3")).toBe(4);
     expect(calculateCredits(imported)).toEqual({ total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 });
@@ -268,6 +304,7 @@ describe("academic calculations", () => {
       { id: "liberal", label: "博雅通識", target: 14, credits: 10, remaining: 4, detail: "至少三個不同課群；目前 4 個：社會、全球、歷史、科技" },
       { id: "school", label: "校訂通識", target: 2, credits: 2, remaining: 0, detail: "校訂通識至少 2 學分" },
     ]);
+    expect(getGeneralCreditRecognition(commonCourses)).toEqual({ attemptedCredits: 12, recognizedCredits: 12, excessCredits: 0 });
   });
 
   it("會將國文與英文遷移為校內共同必修，納入總學分與校共同通識但排除電通系必修", () => {
@@ -284,7 +321,7 @@ describe("academic calculations", () => {
 
   it("拒絕超出 0–100 的數字成績，並正確將 57 分轉為 D+", () => {
     const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別\n115-1,及格邊界,3,57,必修\n115-1,無效分數,3,101,選修", []);
-    expect(preview.toImport).toEqual([{ term: "115-1", name: "及格邊界", credits: 3, grade: "D+", category: "required" }]);
+    expect(preview.toImport).toEqual([{ term: "115-1", name: "及格邊界", credits: 3, grade: "D+", numericScore: 57, category: "required" }]);
     expect(preview.issues).toHaveLength(1);
   });
 

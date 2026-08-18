@@ -23,9 +23,16 @@ export type CourseRecord = {
   name: string;
   credits: number;
   grade: LetterGrade;
+  /** 原始百分制成績（0–100），僅用於學業總平均與學期數字平均；不會取代 GPA 等第。 */
+  numericScore?: number;
   category: CourseCategory;
   recognition?: CreditRecognition;
 };
+
+export type TermRank = { rank: number; cohortSize: number };
+
+/** 電通系畢業規劃中，博雅與校訂通識合計最多認列 16 學分。 */
+export const ccee114GeneralCreditRecognitionLimit = 16;
 
 export type ProjectStatus = "planning" | "active" | "done";
 
@@ -486,6 +493,12 @@ function transcriptGrade(value: string): LetterGrade | undefined {
   if (numeric >= 50) return "D";
   return "F";
 }
+
+function transcriptNumericScore(value: string): number | undefined {
+  const numeric = Number(value.trim());
+  return Number.isFinite(numeric) && numeric >= 0 && numeric <= 100 ? numeric : undefined;
+}
+
 function transcriptRecognition(value: string): CreditRecognition | undefined {
   const normalized = normalize(value).replace(/[\s／/_()（）-]/g, "");
   if (["一般系內", "一般", "standard"].includes(normalized)) return "standard";
@@ -581,7 +594,9 @@ export function parseTranscript(text: string, mapping?: TranscriptFieldMap) {
     const name = row[nameIndex] ?? "";
     const term = termIndex === undefined ? "未指定" : row[termIndex] ?? "未指定";
     const credits = Number(row[creditsIndex]);
-    const grade = transcriptGrade(row[gradeIndex] ?? "");
+    const gradeRaw = row[gradeIndex] ?? "";
+    const grade = transcriptGrade(gradeRaw);
+    const numericScore = transcriptNumericScore(gradeRaw);
     const recognitionRaw = recognitionIndex === undefined ? "" : row[recognitionIndex] ?? "";
     const recognition = recognitionRaw.trim() ? transcriptRecognition(recognitionRaw) : undefined;
     if (!name.trim() || !Number.isFinite(credits) || credits <= 0 || credits > 12 || !grade || (recognitionRaw.trim() && !recognition)) {
@@ -590,7 +605,7 @@ export function parseTranscript(text: string, mapping?: TranscriptFieldMap) {
     }
     const category = transcriptCategory(categoryIndex === undefined ? undefined : row[categoryIndex], name);
     const isUndeclaredRequired = category === "undeclared-required" || recognition === "gpa-only";
-    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: isUndeclaredRequired ? "undeclared-required" : category, ...(!isUndeclaredRequired && recognition ? { recognition } : {}) });
+    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: isUndeclaredRequired ? "undeclared-required" : category, ...(numericScore === undefined ? {} : { numericScore }), ...(!isUndeclaredRequired && recognition ? { recognition } : {}) });
   }
   return { accepted, issues, headers, sample, needsMapping: false, mapping: columns };
 }
@@ -712,6 +727,14 @@ function isCountableCourse(course: Pick<CourseRecord, "name" | "credits" | "grad
     && isCourseCategory(course.category);
 }
 
+function hasNumericScore(course: CourseRecord): course is CourseRecord & { numericScore: number } {
+  return isCountableCourse(course)
+    && typeof course.numericScore === "number"
+    && Number.isFinite(course.numericScore)
+    && course.numericScore >= 0
+    && course.numericScore <= 100;
+}
+
 function isPassingCourse(course: Pick<CourseRecord, "name" | "credits" | "grade" | "category">): boolean {
   return isCountableCourse(course) && getGradePoint(course.grade, "4.0") > 0;
 }
@@ -731,6 +754,15 @@ export function calculateGpa(courses: CourseRecord[], system: GradePointSystem) 
   return Number((points / attemptedCredits).toFixed(2));
 }
 
+/** 以有效且有原始百分制成績的嘗試學分加權；只有等第的資料不會被換算或推測。 */
+export function calculateNumericAverage(courses: CourseRecord[]) {
+  const scoredCourses = courses.filter(hasNumericScore);
+  const scoredCredits = scoredCourses.reduce((sum, course) => sum + course.credits, 0);
+  if (scoredCredits === 0) return null;
+  const points = scoredCourses.reduce((sum, course) => sum + course.numericScore * course.credits, 0);
+  return Number((points / scoredCredits).toFixed(2));
+}
+
 export function getTermGpas(courses: CourseRecord[], system: GradePointSystem) {
   const grouped = new Map<string, CourseRecord[]>();
   courses.filter(isCountableCourse).forEach(course => grouped.set(course.term, [...(grouped.get(course.term) ?? []), course]));
@@ -739,15 +771,68 @@ export function getTermGpas(courses: CourseRecord[], system: GradePointSystem) {
     .sort((a, b) => a.term.localeCompare(b.term, "zh-Hant"));
 }
 
+export function getTermNumericAverages(courses: CourseRecord[]) {
+  const grouped = new Map<string, CourseRecord[]>();
+  courses.filter(hasNumericScore).forEach(course => grouped.set(course.term, [...(grouped.get(course.term) ?? []), course]));
+  return Array.from(grouped.entries())
+    .map(([term, termCourses]) => ({ term, average: calculateNumericAverage(termCourses) }))
+    .filter((item): item is { term: string; average: number } => item.average !== null)
+    .sort((a, b) => a.term.localeCompare(b.term, "zh-Hant"));
+}
+
+/** 清理本機儲存的學期排名，只保留有效的官方名次與總人數。 */
+export function normalizeTermRanks(value: unknown): Record<string, TermRank> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.entries(value).reduce<Record<string, TermRank>>((result, [term, rank]) => {
+    if (!rank || typeof rank !== "object" || Array.isArray(rank)) return result;
+    const candidate = rank as Partial<TermRank>;
+    if (Number.isInteger(candidate.rank) && Number.isInteger(candidate.cohortSize) && candidate.rank! > 0 && candidate.cohortSize! > 0 && candidate.rank! <= candidate.cohortSize!) {
+      result[term] = { rank: candidate.rank!, cohortSize: candidate.cohortSize! };
+    }
+    return result;
+  }, {});
+}
+
+function getGeneralCreditAllocation(courses: CourseRecord[]) {
+  const generalCourses = courses.filter(course => countsTowardGraduation(course) && course.category === "general");
+  const liberalCourses = generalCourses.filter(course => /^(博雅|數位通識)\(/.test(course.name));
+  const schoolCourses = generalCourses.filter(course => /^校訂\(/.test(course.name));
+  const sumCredits = (items: CourseRecord[]) => items.reduce((sum, course) => sum + course.credits, 0);
+  const liberalAttemptedCredits = sumCredits(liberalCourses);
+  const schoolAttemptedCredits = sumCredits(schoolCourses);
+  const liberalRecognizedCredits = Math.min(ccee114CommonEducationTargets.liberal, liberalAttemptedCredits);
+  const schoolRecognizedCredits = Math.min(ccee114CommonEducationTargets.school, schoolAttemptedCredits);
+  return {
+    generalCourses,
+    liberalCourses,
+    schoolCourses,
+    attemptedCredits: sumCredits(generalCourses),
+    recognizedCredits: liberalRecognizedCredits + schoolRecognizedCredits,
+    liberalRecognizedCredits,
+    schoolRecognizedCredits,
+  };
+}
+
+export function getGeneralCreditRecognition(courses: CourseRecord[]) {
+  const allocation = getGeneralCreditAllocation(courses);
+  return {
+    attemptedCredits: allocation.attemptedCredits,
+    recognizedCredits: allocation.recognizedCredits,
+    excessCredits: Math.max(0, allocation.attemptedCredits - allocation.recognizedCredits),
+  };
+}
+
 export function calculateCredits(courses: CourseRecord[]) {
-  return courses.filter(countsTowardGraduation).reduce(
-    (totals, course) => {
-      totals.total += course.credits;
-      totals[course.category] += course.credits;
-      return totals;
-    },
-    { total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 },
-  );
+  const totals = { total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 };
+  courses.filter(countsTowardGraduation).forEach(course => {
+    if (course.category === "general") return;
+    totals.total += course.credits;
+    totals[course.category] += course.credits;
+  });
+  const generalRecognition = getGeneralCreditRecognition(courses);
+  totals.total += generalRecognition.recognizedCredits;
+  totals.general = generalRecognition.recognizedCredits;
+  return totals;
 }
 
 /**
@@ -758,15 +843,16 @@ export function getCcee114CommonEducationProgress(courses: CourseRecord[]): Ccee
   const eligible = courses.filter(countsTowardGraduation);
   const chinese = eligible.filter(course => /^中文閱讀與表達\([一二]\)$/.test(course.name));
   const english = eligible.filter(course => /^實用英文\([一二三四]\)$/.test(course.name));
-  const school = eligible.filter(course => course.category === "general" && /^校訂\(/.test(course.name));
-  const liberal = eligible.filter(course => course.category === "general" && /^(博雅|數位通識)\(/.test(course.name));
+  const generalAllocation = getGeneralCreditAllocation(courses);
+  const school = generalAllocation.schoolCourses;
+  const liberal = generalAllocation.liberalCourses;
   const sumCredits = (items: CourseRecord[]) => items.reduce((total, course) => total + course.credits, 0);
   const liberalGroups = Array.from(new Set(liberal.map(course => course.name.match(/^[^(]+\(([^)]+)\)/)?.[1]).filter((value): value is string => Boolean(value))));
   const rows = [
     { id: "chinese" as const, label: "中文閱讀與表達", target: ccee114CommonEducationTargets.chinese, credits: sumCredits(chinese), detail: "大一兩學期必修，共 4 學分" },
     { id: "english" as const, label: "實用英文", target: ccee114CommonEducationTargets.english, credits: sumCredits(english), detail: "大一至大二四學期必修，共 8 學分" },
-    { id: "liberal" as const, label: "博雅通識", target: ccee114CommonEducationTargets.liberal, credits: sumCredits(liberal), detail: `至少三個不同課群；目前 ${liberalGroups.length} 個：${liberalGroups.length ? liberalGroups.join("、") : "尚未累積"}` },
-    { id: "school" as const, label: "校訂通識", target: ccee114CommonEducationTargets.school, credits: sumCredits(school), detail: "校訂通識至少 2 學分" },
+    { id: "liberal" as const, label: "博雅通識", target: ccee114CommonEducationTargets.liberal, credits: generalAllocation.liberalRecognizedCredits, detail: `至少三個不同課群；目前 ${liberalGroups.length} 個：${liberalGroups.length ? liberalGroups.join("、") : "尚未累積"}` },
+    { id: "school" as const, label: "校訂通識", target: ccee114CommonEducationTargets.school, credits: generalAllocation.schoolRecognizedCredits, detail: "校訂通識至少 2 學分" },
   ];
   return rows.map(row => ({ ...row, remaining: Math.max(0, row.target - row.credits) }));
 }

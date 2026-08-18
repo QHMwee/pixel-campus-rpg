@@ -26,20 +26,20 @@ describe("fragment transcript import", () => {
       { term: "114-1", name: "系必修測試甲", credits: 8, grade: "A" as const, category: "required" as const, recognition: "standard" as const },
       { term: "114-1", name: "系必修測試乙", credits: 6, grade: "A" as const, category: "required" as const, recognition: "standard" as const },
       { term: "114-1", name: "外系已認列測試", credits: 12, grade: "A" as const, category: "elective" as const, recognition: "approved-external" as const },
-      { term: "114-1", name: "通識測試甲", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
-      { term: "114-1", name: "通識測試乙", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
-      { term: "114-1", name: "通識測試丙", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
+      { term: "114-1", name: "博雅(社會)測試", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
+      { term: "114-1", name: "博雅(科技)測試", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
+      { term: "114-1", name: "校訂(六)測試", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
       { term: "114-1", name: "僅計 GPA 測試", credits: 4, grade: "A" as const, category: "elective" as const, recognition: "gpa-only" as const },
     ];
     const first = mergeFragmentTranscriptImport([], incoming, defaultGraduationGoals, () => "import-1");
     expect(first.imported).toHaveLength(7);
     expect(first.goals).toMatchObject({ total: 128, required: 51, elective: 49, general: 28 });
-    expect(first.credits).toMatchObject({ total: 53, required: 14, elective: 12, general: 27 });
+    expect(first.credits).toMatchObject({ total: 42, required: 14, elective: 12, general: 16 });
 
     const repeated = mergeFragmentTranscriptImport(first.courses, incoming, first.goals, () => "should-not-exist");
     expect(repeated.imported).toHaveLength(0);
     expect(repeated.courses).toHaveLength(7);
     expect(repeated.goals).toMatchObject({ total: 128, required: 51, elective: 49, general: 28 });
-    expect(repeated.credits).toMatchObject({ total: 53, required: 14, elective: 12, general: 27 });
+    expect(repeated.credits).toMatchObject({ total: 42, required: 14, elective: 12, general: 16 });
   });
 });
