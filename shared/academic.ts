@@ -97,6 +97,9 @@ export type CareerProfile = {
   targetSkills: string[];
   projectTitle: string;
   projectBrief: string;
+  evidence: { label: string; url: string };
+  workRequirements: Array<{ skill: string; rationale: string }>;
+  projectIdeas: Array<{ title: string; description: string; deliverables: string[]; skills: string[] }>;
 };
 
 export type CourseCatalogEntry = {
@@ -111,10 +114,10 @@ export type CourseCatalogEntry = {
 };
 
 export const careerProfiles: CareerProfile[] = [
-  { id: "frontend", title: "前端工程師", shortTitle: "前端", description: "打造互動介面、完整產品體驗與可展示的網頁作品。", targetSkills: ["React", "TypeScript", "UI/UX", "Git", "部署"], projectTitle: "互動校園服務儀表板", projectBrief: "以真實校園痛點設計可操作的前端服務，完成響應式介面、資料狀態與部署說明。" },
-  { id: "data", title: "資料分析師", shortTitle: "資料", description: "以資料處理、視覺化與洞察溝通支援決策。", targetSkills: ["統計", "SQL", "Python", "資料視覺化", "資料敘事"], projectTitle: "校園行為資料洞察報告", projectBrief: "從資料蒐集、清理到儀表板呈現，提出一個可驗證的校園改善建議。" },
-  { id: "product", title: "產品經理", shortTitle: "產品", description: "以使用者研究、產品策略與跨域協作推進解決方案。", targetSkills: ["使用者研究", "產品策略", "原型", "數據判讀", "溝通表達"], projectTitle: "校園服務產品提案", projectBrief: "完成使用者訪談、問題定義、原型與指標設計，建立可討論的產品決策脈絡。" },
-  { id: "research", title: "研究與深造", shortTitle: "研究", description: "建立研究設計、量化分析與學術論證能力。", targetSkills: ["研究方法", "統計", "文獻探討", "Python", "學術寫作"], projectTitle: "小型研究計畫與海報", projectBrief: "選定一個可操作的問題，完成文獻摘要、研究設計、初步分析與研究海報。" },
+  { id: "frontend", title: "前端工程師", shortTitle: "前端", description: "打造互動介面、完整產品體驗與可展示的網頁作品。", targetSkills: ["React", "TypeScript", "UI/UX", "Git", "部署"], projectTitle: "互動校園服務儀表板", projectBrief: "以真實校園痛點設計可操作的前端服務，完成響應式介面、資料狀態與部署說明。", evidence: { label: "O*NET｜Web Developers", url: "https://www.onetonline.org/link/summary/15-1254.00" }, workRequirements: [{ skill: "需求轉譯與介面設計", rationale: "把使用者需求變成清楚、可操作的流程。" }, { skill: "元件開發與版本控制", rationale: "完成可維護的互動功能與開發紀錄。" }, { skill: "測試、可近用性與部署", rationale: "驗證跨裝置品質並讓作品可分享。" }], projectIdeas: [{ title: "校園服務排隊資訊前端", description: "針對借用、餐飲或行政服務的等待問題，完成可操作的查詢與回報介面。", deliverables: ["需求訪談摘要", "響應式介面", "測試紀錄", "部署連結與 README"], skills: ["React", "TypeScript", "UI/UX", "Git"] }, { title: "無障礙校園活動報名流程", description: "重新設計活動瀏覽、報名與確認流程，並以鍵盤操作驗證體驗。", deliverables: ["流程圖", "互動原型", "可近用性檢核", "回顧紀錄"], skills: ["UI/UX", "React", "測試", "溝通表達"] }] },
+  { id: "data", title: "資料分析師", shortTitle: "資料", description: "以資料處理、視覺化與洞察溝通支援決策。", targetSkills: ["統計", "SQL", "Python", "資料視覺化", "資料敘事"], projectTitle: "校園行為資料洞察報告", projectBrief: "從資料蒐集、清理到儀表板呈現，提出一個可驗證的校園改善建議。", evidence: { label: "O*NET｜Data Scientists", url: "https://www.onetonline.org/link/summary/15-2051.00" }, workRequirements: [{ skill: "資料清理與 SQL／程式處理", rationale: "將原始資料轉為可分析、可重現的資料集。" }, { skill: "統計與評估指標", rationale: "用合理方法回答問題並驗證結論。" }, { skill: "視覺化與資料敘事", rationale: "清楚溝通趨勢、限制與建議。" }], projectIdeas: [{ title: "校園空間使用洞察儀表板", description: "以公開或去識別化資料分析不同時段的空間使用情況並提出改善假設。", deliverables: ["資料字典", "清理流程", "互動儀表板", "洞察簡報"], skills: ["Python", "SQL", "統計", "資料視覺化"] }, { title: "學習投入匿名問卷分析", description: "設計小型匿名問卷，檢視學習習慣與自評成效的關係，清楚說明樣本限制。", deliverables: ["問卷與同意說明", "分析筆記本", "視覺化", "限制報告"], skills: ["統計", "Python", "資料敘事", "研究方法"] }] },
+  { id: "product", title: "產品經理", shortTitle: "產品", description: "以使用者研究、產品策略與跨域協作推進解決方案。", targetSkills: ["使用者研究", "產品策略", "原型", "數據判讀", "溝通表達"], projectTitle: "校園服務產品提案", projectBrief: "完成使用者訪談、問題定義、原型與指標設計，建立可討論的產品決策脈絡。", evidence: { label: "O*NET｜Project Management Specialists", url: "https://www.onetonline.org/link/summary/13-1082.00" }, workRequirements: [{ skill: "利害關係人需求研究", rationale: "先確認問題、對象與限制，再決定要做什麼。" }, { skill: "範圍、優先級與里程碑", rationale: "以時程和資源限制安排可交付的最小版本。" }, { skill: "原型、指標與進度溝通", rationale: "以回饋、量測與文件降低猜測。" }], projectIdeas: [{ title: "新生校園導覽服務 MVP", description: "從新生訪談出發，定義找路與辦事困難，提出可測試的第一版服務。", deliverables: ["訪談洞察", "PRD", "可點擊原型", "成功指標與路線圖"], skills: ["使用者研究", "產品策略", "原型", "溝通表達"] }, { title: "社團活動媒合流程改善", description: "分析招募、報名到回饋的斷點，設計優先級明確的功能假設並進行測試。", deliverables: ["服務藍圖", "優先級矩陣", "測試腳本", "成果回顧"], skills: ["使用者研究", "數據判讀", "原型", "專題管理"] }] },
+  { id: "research", title: "研究與深造", shortTitle: "研究", description: "建立研究設計、量化分析與學術論證能力。", targetSkills: ["研究方法", "統計", "文獻探討", "Python", "學術寫作"], projectTitle: "小型研究計畫與海報", projectBrief: "選定一個可操作的問題，完成文獻摘要、研究設計、初步分析與研究海報。", evidence: { label: "O*NET｜Computer and Information Research Scientists", url: "https://www.onetonline.org/link/summary/15-1221.00" }, workRequirements: [{ skill: "問題定義與文獻探討", rationale: "將興趣收斂成可驗證且有脈絡的研究問題。" }, { skill: "研究設計與量化方法", rationale: "選擇資料、方法與評估方式，避免只展示結果。" }, { skill: "原型、評估與技術寫作", rationale: "如實說明證據、限制與下一步。" }], projectIdeas: [{ title: "校園網路服務延遲量測研究", description: "設計可重複量測流程，比較不同時段或位置的延遲資料，提出改善假設。", deliverables: ["研究問題", "量測腳本", "統計圖表", "海報或短論文"], skills: ["研究方法", "Python", "統計", "學術寫作"] }, { title: "學習輔助介面可用性研究", description: "比較兩種介面設計對任務完成時間與主觀負荷的影響，採用小樣本可重複流程。", deliverables: ["文獻摘要", "實驗設計", "匿名資料分析", "研究限制"], skills: ["研究方法", "UI/UX", "統計", "學術寫作"] }] },
 ];
 
 export const courseCatalog: CourseCatalogEntry[] = [
@@ -376,7 +379,7 @@ function nkustPriority(category: CourseCategory): NkustPlannedCourseDraft["prior
 }
 
 function planCourseKey(course: Pick<NkustPlannedCourseDraft, "term" | "name">) {
-  return `${normalize(course.term)}::${normalize(course.name)}`;
+  return normalize(course.name);
 }
 
 function isValidPlannedCourse(course: NkustPlannedCourseDraft) {
@@ -940,6 +943,21 @@ function normalize(value: string) {
   return value.trim().toLocaleLowerCase("zh-Hant");
 }
 
+export type CoursePlanSelectionState = "available" | "planned" | "completed";
+
+/** 已規劃或已及格完成的同名課程不可再加入規劃；不及格課程仍可規劃重修。 */
+export function getCoursePlanSelectionState(
+  name: string,
+  completedCourses: CourseRecord[],
+  plannedCourses: Array<Pick<CoursePlanExportEntry, "name">>,
+): CoursePlanSelectionState {
+  const normalizedName = normalize(name);
+  if (!normalizedName) return "available";
+  if (plannedCourses.some(course => normalize(course.name) === normalizedName)) return "planned";
+  if (completedCourses.some(course => normalize(course.name) === normalizedName && isPassingCourse(course))) return "completed";
+  return "available";
+}
+
 export function buildCareerRecommendations(
   courses: CourseRecord[],
   projects: ProjectRecord[],
@@ -987,6 +1005,10 @@ export function buildCareerRecommendations(
   const lockedCourses = candidates.filter(course => !course.unlocked).sort(sorter).slice(0, 3);
   const readiness = Math.round(((profile.targetSkills.length - skillGaps.length) / profile.targetSkills.length) * 100);
   const projectSkills = skillGaps.slice(0, 3);
+  const projectIdeas = profile.projectIdeas.map(idea => ({
+    ...idea,
+    gapSkills: idea.skills.filter(skill => skillGaps.some(gap => normalize(gap) === normalize(skill))),
+  }));
   const suggestedCredits = preferences.workload === "light" ? Math.min(base.suggestedCredits, 14) : preferences.workload === "ambitious" ? Math.max(base.suggestedCredits, 18) : Math.min(base.suggestedCredits, 18);
   const projectStyleText = preferences.projectStyle === "team" ? "建議以 2–4 人協作，明確分配研究、設計與實作角色。" : preferences.projectStyle === "research" ? "建議保留研究問題、方法與驗證證據，讓成果可延伸為研究或競賽作品。" : "建議以個人可獨立完成的最小可行成果為第一階段，逐步擴充深度。";
 
@@ -1002,6 +1024,9 @@ export function buildCareerRecommendations(
       : plannedNames.size ? `已優先參考你規劃表中的 ${plannedNames.size} 門課；若它們符合先修條件與職涯方向，會在建議中優先顯示。` : "先在課程規劃表寫下想修的課，系統就能把它們納入選課建議。",
     recommendedCourses,
     lockedCourses,
+    careerEvidence: profile.evidence,
+    workRequirements: profile.workRequirements,
+    projectIdeas,
     projectSuggestion: {
       title: profile.projectTitle,
       description: `${profile.projectBrief} ${projectStyleText}`,

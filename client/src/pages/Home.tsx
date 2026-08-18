@@ -55,6 +55,7 @@ import {
   getCreditPlanStatus,
   getCreditRecognitionSummary,
   getGeneralCreditRecognition,
+  getCoursePlanSelectionState,
   getCcee114CommonEducationProgress,
   getCalendarReadyPlanCourses,
   getExportablePlanCourses,
@@ -252,11 +253,14 @@ function Ccee114CourseMapPanel({ completedCourses, plannedCourses, onAdd }: { co
   const [selectedGroup, setSelectedGroup] = useState<"all" | Ccee114CourseGroup>("all");
   const groups = ["all", ...Array.from(new Set(ccee114CourseMap.map(course => course.group)))] as Array<"all" | Ccee114CourseGroup>;
   const visibleCourses = selectedGroup === "all" ? ccee114CourseMap : ccee114CourseMap.filter(course => course.group === selectedGroup);
-  const plannedNames = new Set(plannedCourses.map(course => course.name.trim().toLocaleLowerCase("zh-Hant")));
+  const plannedNames = new Set([
+    ...plannedCourses.map(course => course.name.trim().toLocaleLowerCase("zh-Hant")),
+    ...completedCourses.filter(course => getGradePoint(course.grade, "4.0") > 0).map(course => course.name.trim().toLocaleLowerCase("zh-Hant")),
+  ]);
   const requirementProgress = getCcee114RequirementProgress(completedCourses, plannedCourses);
   const prerequisiteAlerts = getCcee114PrerequisiteAlerts(completedCourses, plannedCourses);
   return <div className="space-y-4">
-    <Panel gold className="overflow-hidden"><PanelTitle eyebrow="CCEE 114 COURSE MAP" title="電通系完整課程地圖" action={<GraduationCap className="text-[#f4c659]" />} /><div className="space-y-4 p-5"><p className="max-w-4xl text-sm leading-7 text-[#d5e0f2]">依電通系四技 114 課程結構收錄系必修、核心、專業實習與三大系專業選修領域。這裡<strong className="text-[#ffe797]">不判斷當期是否開課</strong>；按下加入後會直接寫入你的本機規劃，並以官方建議學期作為起點，之後仍可自行調整。</p><p className="border-l-4 border-[#74e2b1] bg-[#173b3b] px-3 py-2 text-xs leading-5 text-[#cef5e7]">官方擋修只會顯示提醒，不會阻擋你先把課放入規劃。完成課程仍以正式成績與系所實際選課規定為準。</p><div className="flex flex-wrap gap-2">{groups.map(group => <button key={group} onClick={() => setSelectedGroup(group)} className={`border px-3 py-2 text-xs font-black transition ${selectedGroup === group ? "border-[#f4c659] bg-[#f4c659] text-[#172440]" : "border-[#56709c] bg-[#162744] text-[#c8d8f2] hover:border-[#8eb7ed]"}`}>{group === "all" ? `全部 ${ccee114CourseMap.length}` : cceeGroupLabels[group]}</button>)}</div></div></Panel>
+    <Panel gold className="overflow-hidden"><PanelTitle eyebrow="CCEE 114 COURSE MAP" title="電通系完整課程地圖" action={<GraduationCap className="text-[#f4c659]" />} /><div className="space-y-4 p-5"><p className="max-w-4xl text-sm leading-7 text-[#d5e0f2]">依電通系四技 114 課程結構收錄系必修、核心、專業實習與三大系專業選修領域。這裡<strong className="text-[#ffe797]">不判斷當期是否開課</strong>；按下加入後會直接寫入你的本機規劃，並以官方建議學期作為起點，之後仍可自行調整。</p><p className="border-l-4 border-[#74e2b1] bg-[#173b3b] px-3 py-2 text-xs leading-5 text-[#cef5e7]">同名課程一旦已規劃或已有通過成績，就會鎖定不可重複加入；不及格課程仍可規劃重修。官方擋修只會顯示提醒，實際選課仍以系所規定為準。</p><div className="flex flex-wrap gap-2">{groups.map(group => <button key={group} onClick={() => setSelectedGroup(group)} className={`border px-3 py-2 text-xs font-black transition ${selectedGroup === group ? "border-[#f4c659] bg-[#f4c659] text-[#172440]" : "border-[#56709c] bg-[#162744] text-[#c8d8f2] hover:border-[#8eb7ed]"}`}>{group === "all" ? `全部 ${ccee114CourseMap.length}` : cceeGroupLabels[group]}</button>)}</div></div></Panel>
     <div className="grid gap-4 lg:grid-cols-2">{requirementProgress.map(item => <Panel key={item.id} className="overflow-hidden"><div className="p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-black text-[#fff8df]">{item.label}</p><p className="mt-1 text-xs leading-5 text-[#adc0df]">{item.detail}</p></div><span className="border border-[#f4c659] bg-[#574a28] px-2 py-1 text-xs font-black text-[#ffe797]">缺 {item.remainingCourses} 門／{item.remainingCredits} 學分</span></div><div className="mt-4 grid grid-cols-2 gap-3 text-xs"><div className="border border-[#48618c] bg-[#14233d] p-3"><p className="text-[#9db2d4]">已完成</p><p className="mt-1 font-black text-[#74e2b1]">{item.completedCourses} 門／{item.completedCredits} 學分</p></div><div className="border border-[#48618c] bg-[#14233d] p-3"><p className="text-[#9db2d4]">已規劃</p><p className="mt-1 font-black text-[#bba8ff]">{item.plannedCourses} 門／{item.plannedCredits} 學分</p></div></div></div></Panel>)}</div>
     {prerequisiteAlerts.length > 0 && <Panel className="overflow-hidden"><PanelTitle eyebrow="PREREQUISITE ALERTS" title="官方擋修提醒" action={<ShieldCheck className="text-[#f4c659]" />} /><div className="space-y-2 p-5">{prerequisiteAlerts.map(alert => <div key={alert.courseName} className="border-l-4 border-[#f4c659] bg-[#4c4024] px-3 py-2 text-xs leading-5 text-[#ffe797]">{alert.courseName}：須先修 <b>{alert.prerequisiteName}</b> 且數字成績達 {alert.minNumericScore} 分。{alert.reason}</div>)}</div></Panel>}
     <Panel className="overflow-hidden"><PanelTitle eyebrow="SELECT FROM MAP" title={selectedGroup === "all" ? `全部官方系課程 · ${visibleCourses.length} 門` : `${cceeGroupLabels[selectedGroup]} · ${visibleCourses.length} 門`} action={<BookOpen className="text-[#74e2b1]" />} /><div className="max-h-[760px] overflow-y-auto p-4"><div className="grid gap-3 xl:grid-cols-2">{visibleCourses.map(course => { const alreadyPlanned = plannedNames.has(course.name.trim().toLocaleLowerCase("zh-Hant")); return <article key={course.id} className="border-2 border-[#405b87] bg-[#152540] p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-black text-[#fff8df]">{course.name}</p><p className="mt-1 text-xs text-[#a9bddb]">建議 {course.recommendedTerm} · {course.credits} 學分 · {cceeGroupLabels[course.group]}</p></div><span className={`shrink-0 border px-2 py-1 text-[10px] font-black ${course.category === "required" ? "border-[#f4c659] bg-[#594a28] text-[#ffe797]" : "border-[#8aaeff] bg-[#243d69] text-[#d5e5ff]"}`}>{course.category === "required" ? "必修" : "專業選修"}</span></div><p className="mt-3 min-h-10 text-xs leading-5 text-[#c4d3eb]">{course.description}</p><div className="mt-3 flex flex-wrap gap-1">{course.skills.map(skill => <span key={skill} className="border border-[#5873a1] bg-[#1b3154] px-2 py-1 text-[10px] text-[#d7e5ff]">{skill}</span>)}</div>{course.prerequisite && <p className="mt-3 border-l-4 border-[#f4c659] pl-2 text-[11px] leading-5 text-[#ffe797]">擋修：{course.prerequisite.name} ≥ {course.prerequisite.minNumericScore} 分</p>}<PixelButton disabled={alreadyPlanned} onClick={() => onAdd(course)} className={`mt-4 w-full ${alreadyPlanned ? "cursor-not-allowed bg-[#465a7d] opacity-70" : "bg-[#74e2b1] text-[#112b2d]"}`}>{alreadyPlanned ? "已在規劃中" : <><Plus size={15} /> 加入規劃</>}</PixelButton></article>; })}</div></div></Panel>
@@ -488,8 +492,7 @@ export default function Home() {
 
   function addCcee114CourseToPlan(course: Ccee114CourseEntry) {
     setData(current => {
-      const alreadyPlanned = current.plannedCourses.some(item => item.name.trim().toLocaleLowerCase("zh-Hant") === course.name.trim().toLocaleLowerCase("zh-Hant"));
-      if (alreadyPlanned) return current;
+      if (getCoursePlanSelectionState(course.name, current.courses, current.plannedCourses) !== "available") return current;
       return {
         ...current,
         goals: applyGraduationGoalTemplate(current.goals, "ccee114"),
@@ -501,6 +504,15 @@ export default function Home() {
   }
 
   function updatePlannedCourse(id: string, patch: Partial<PlannedCourse>) {
+    const target = data.plannedCourses.find(course => course.id === id);
+    if (target) {
+      const candidate = { ...target, ...patch };
+      const selectionState = getCoursePlanSelectionState(candidate.name, data.courses, data.plannedCourses.filter(course => course.id !== id));
+      if (selectionState !== "available") {
+        setPlanExportNotice(selectionState === "completed" ? `「${candidate.name.trim()}」已有通過成績，不能再次加入規劃。` : `「${candidate.name.trim()}」已在課程規劃中，不能重複加入。`);
+        return;
+      }
+    }
     setData(current => ({ ...current, plannedCourses: current.plannedCourses.map(course => course.id === id ? { ...course, ...patch } : course) }));
   }
 
@@ -546,14 +558,14 @@ export default function Home() {
   }
 
   function previewNkustTimetable(text = nkustTimetableText) {
-    const preview = prepareNkustTimetableImport(text, data.plannedCourses);
+    const preview = prepareNkustTimetableImport(text, [...data.plannedCourses, ...data.courses.filter(course => getGradePoint(course.grade, "4.0") > 0)]);
     setNkustTimetablePreview(preview);
     setNkustTimetableDraft(preview.accepted);
   }
 
   function openCcee114RequiredPlan() {
     const text = buildCcee114RequiredCoursePlanCsv();
-    const preview = prepareNkustTimetableImport(text, data.plannedCourses);
+    const preview = prepareNkustTimetableImport(text, [...data.plannedCourses, ...data.courses.filter(course => getGradePoint(course.grade, "4.0") > 0)]);
     setNkustImportMode("ccee114");
     setNkustTimetableText(text);
     setNkustTimetablePreview(preview);
@@ -564,7 +576,7 @@ export default function Home() {
   function updateNkustTimetableDraft(index: number, patch: Partial<NkustPlannedCourseDraft>) {
     setNkustTimetableDraft(current => {
       const next = current.map((course, rowIndex) => rowIndex === index ? { ...course, ...patch } : course);
-      setNkustTimetablePreview(prepareNkustTimetableDraftImport(next, data.plannedCourses, nkustTimetablePreview?.headers));
+      setNkustTimetablePreview(prepareNkustTimetableDraftImport(next, [...data.plannedCourses, ...data.courses.filter(course => getGradePoint(course.grade, "4.0") > 0)], nkustTimetablePreview?.headers));
       return next;
     });
   }
@@ -572,7 +584,7 @@ export default function Home() {
   function removeNkustTimetableDraftRow(index: number) {
     setNkustTimetableDraft(current => {
       const next = current.filter((_, rowIndex) => rowIndex !== index);
-      setNkustTimetablePreview(prepareNkustTimetableDraftImport(next, data.plannedCourses, nkustTimetablePreview?.headers));
+      setNkustTimetablePreview(prepareNkustTimetableDraftImport(next, [...data.plannedCourses, ...data.courses.filter(course => getGradePoint(course.grade, "4.0") > 0)], nkustTimetablePreview?.headers));
       return next;
     });
   }
@@ -589,7 +601,7 @@ export default function Home() {
     reader.onload = () => {
       const text = String(reader.result ?? "");
       setNkustTimetableText(text);
-      const preview = prepareNkustTimetableImport(text, data.plannedCourses);
+      const preview = prepareNkustTimetableImport(text, [...data.plannedCourses, ...data.courses.filter(course => getGradePoint(course.grade, "4.0") > 0)]);
       setNkustTimetablePreview(preview);
       setNkustTimetableDraft(preview.accepted);
     };
@@ -798,7 +810,7 @@ export default function Home() {
               return { ...current, termRanks };
             })} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} fragmentImportError={fragmentImportError} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
-            {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /></>}
+            {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /><CareerRealityPanel recommendations={recommendations} /></>}
             {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
             <AiPlannerPanel section={activeView === "plan" ? "dashboard" : activeView} snapshot={aiSnapshot} />
@@ -808,7 +820,7 @@ export default function Home() {
 
       {celebration && <AchievementCelebration achievement={celebration} onClose={() => setCelebration(null)} />}
       <TranscriptImportDialogV2 open={transcriptOpen} onOpenChange={setTranscriptOpen} text={transcriptText} preview={transcriptPreview} draft={transcriptDraft} onTextChange={text => { setTranscriptText(text); setTranscriptMapping({}); const preview = prepareTranscriptImport(text, data.courses); setTranscriptPreview(preview); setTranscriptDraft(preview.toImport); setPdfConversionNote(null); }} onFileChange={readTranscriptFile} onPdfChange={readTranscriptPdf} isPdfConverting={pdfConverter.isPending} pdfNote={pdfConversionNote} onDraftChange={updateTranscriptDraft} onDraftDelete={removeTranscriptDraftRow} onPreview={() => previewTranscript()} onConfirm={confirmTranscriptImport} />
-      <NkustTimetableImportDialog open={nkustImportOpen} onOpenChange={setNkustImportOpen} text={nkustTimetableText} preview={nkustTimetablePreview} draft={nkustTimetableDraft} onTextChange={text => { setNkustTimetableText(text); const preview = prepareNkustTimetableImport(text, data.plannedCourses); setNkustTimetablePreview(preview); setNkustTimetableDraft(preview.accepted); }} onFileChange={readNkustTimetableFile} onDownloadTemplate={() => downloadTextFile(buildNkustTimetableTemplate(), "nkust-timetable-template.csv", "text/csv")} onDraftChange={updateNkustTimetableDraft} onDraftDelete={removeNkustTimetableDraftRow} onPreview={() => previewNkustTimetable()} onConfirm={confirmNkustTimetableImport} />
+      <NkustTimetableImportDialog open={nkustImportOpen} onOpenChange={setNkustImportOpen} text={nkustTimetableText} preview={nkustTimetablePreview} draft={nkustTimetableDraft} onTextChange={text => { setNkustTimetableText(text); const preview = prepareNkustTimetableImport(text, [...data.plannedCourses, ...data.courses.filter(course => getGradePoint(course.grade, "4.0") > 0)]); setNkustTimetablePreview(preview); setNkustTimetableDraft(preview.accepted); }} onFileChange={readNkustTimetableFile} onDownloadTemplate={() => downloadTextFile(buildNkustTimetableTemplate(), "nkust-timetable-template.csv", "text/csv")} onDraftChange={updateNkustTimetableDraft} onDraftDelete={removeNkustTimetableDraftRow} onPreview={() => previewNkustTimetable()} onConfirm={confirmNkustTimetableImport} />
       {transcriptOpen && transcriptPreview?.needsMapping && <TranscriptMappingWizard open headers={transcriptPreview.headers ?? []} sample={transcriptPreview.sample ?? []} mapping={transcriptMapping} onChange={setTranscriptMapping} onApply={() => previewTranscript(transcriptText, transcriptMapping)} onClose={() => setTranscriptPreview(null)} />}
     </main>
   );
@@ -967,6 +979,28 @@ function GoalInput({ label, value, onChange }: { label: string; value: number; o
 function QuestView({ recommendations, goals, gpa, credits, completedProjects }: { recommendations: ReturnType<typeof buildCareerRecommendations>; goals: GraduationGoals; gpa: number; credits: ReturnType<typeof calculateCredits>; completedProjects: number }) {
   const completion = goals.total ? Math.round((credits.total / goals.total) * 100) : 0;
   return <div className="space-y-4 animate-pop-in"><Panel gold className="overflow-hidden"><div className="grid gap-6 p-6 md:grid-cols-[auto_minmax(0,1fr)] md:p-8"><span className="crest mx-auto flex h-20 w-20 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[5px_5px_0_#080d1f] md:mx-0"><WandSparkles size={38} /></span><div><p className="pixel-font text-[9px] leading-6 text-[#a28cff]">AI-STYLE QUEST GUIDE</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">下一學期的智慧任務</h2><p className="mt-4 max-w-3xl text-base leading-8 text-[#d6e0f1]">{recommendations.goal}</p><div className="mt-5 flex flex-wrap gap-2"><span className="border-2 border-[#f4c659] bg-[#4f4222] px-3 py-1.5 text-xs font-black text-[#ffe796]">建議修習 {recommendations.suggestedCredits} 學分</span><span className="border-2 border-[#74e2b1] bg-[#1f4d47] px-3 py-1.5 text-xs font-black text-[#c5f8dd]">目前 GPA {gpa.toFixed(2)}</span><span className="border-2 border-[#aa97ff] bg-[#443a78] px-3 py-1.5 text-xs font-black text-[#ded6ff]">已完成專題 {completedProjects}</span></div></div></div></Panel><div className="grid gap-4 xl:grid-cols-[1.1fr_.9fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="RECOMMENDED QUESTS" title="選課與成長建議" action={<Compass className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#42557d] px-5">{recommendations.suggestions.map((suggestion, index) => <div className="flex gap-4 py-5" key={suggestion}><span className="pixel-font flex h-9 w-9 shrink-0 items-center justify-center border-2 border-[#f4c659] bg-[#5a4923] text-[10px] text-[#fff0a8]">0{index + 1}</span><p className="pt-1 text-sm leading-7 text-[#d5e0f3]">{suggestion}</p></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="CAMPAIGN STATUS" title="冒險節奏" action={<BarChart3 className="text-[#f4c659]" />} /><div className="space-y-5 p-5"><div className="border-2 border-[#526896] bg-[#17243f] p-4"><div className="flex justify-between gap-3"><p className="font-extrabold text-[#fff8df]">畢業主線完成度</p><p className="font-black text-[#f4c659]">{completion}%</p></div><div className="mt-3"><ProgressBar value={completion} /></div><p className="mt-3 text-xs leading-5 text-[#a8bad8]">尚有 {recommendations.remainingCredits} 學分；分配至 {goals.semestersLeft} 個學期可維持穩定節奏。</p></div><div className="border-2 border-[#526896] bg-[#17243f] p-4"><p className="font-extrabold text-[#fff8df]">戰術提醒</p><p className="mt-2 text-sm leading-7 text-[#b7c7e3]">排課時先鎖定必修與有先修門檻的課程，再用通識或選修平衡每週負荷。每學期替作品集留下一個能完成、能展示的任務。</p></div><p className="border-l-4 border-[#aa97ff] pl-3 text-xs leading-6 text-[#c8bfff]">本頁推薦使用目前的 GPA、已修學分、分類缺口與剩餘學期即時計算；它不會替你讀取或傳送外部資料。</p></div></Panel></div></div>;
+}
+
+function CareerRealityPanel({ recommendations }: { recommendations: ReturnType<typeof buildCareerRecommendations> }) {
+  return <Panel className="mt-4 overflow-hidden" gold>
+    <PanelTitle eyebrow="ROLE REALITY CHECK" title={`${recommendations.profile.title}：能力與專題構想`} action={<Target className="text-[#f4c659]" />} />
+    <div className="space-y-5 p-5">
+      <div className="border-l-4 border-[#74e2b1] bg-[#173c3a] px-4 py-3 text-sm leading-7 text-[#d6f7e6]">
+        這裡的能力方向參考真實職務的典型工作活動，再轉為大學生可練習的作品集任務；實際職缺會因公司、地點與資歷而不同。{" "}
+        <a className="font-black text-[#ffe797] underline underline-offset-4 hover:text-white" href={recommendations.careerEvidence.url} target="_blank" rel="noreferrer">查看 {recommendations.careerEvidence.label}</a>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-3">
+        {recommendations.workRequirements.map(requirement => <article key={requirement.skill} className="border-2 border-[#526995] bg-[#172640] p-4"><p className="font-black text-[#fff8df]">{requirement.skill}</p><p className="mt-2 text-xs leading-6 text-[#bbcae2]">{requirement.rationale}</p></article>)}
+      </div>
+      <div>
+        <p className="pixel-font text-[8px] leading-5 text-[#f4c659]">PORTFOLIO PROJECT QUESTS</p>
+        <p className="mt-1 text-sm leading-6 text-[#c4d3e8]">選一項從最小可行成果開始；每個構想都包含可以被檢視的交付物，而不只是題目。</p>
+        <div className="mt-3 grid gap-4 xl:grid-cols-2">
+          {recommendations.projectIdeas.map((idea, index) => <article key={idea.title} className="border-2 border-[#66558f] bg-[#1e2549] p-4"><div className="flex items-start gap-3"><span className="pixel-font flex h-8 w-8 shrink-0 items-center justify-center border border-[#a998ff] bg-[#443a78] text-[10px] text-[#eee7ff]">0{index + 1}</span><div><h3 className="font-black text-[#fff8df]">{idea.title}</h3><p className="mt-2 text-sm leading-6 text-[#c9d5ed]">{idea.description}</p></div></div><div className="mt-4 border-t border-[#4d5e87] pt-3"><p className="text-[11px] font-black text-[#f4c659]">可交付成果</p><ul className="mt-2 space-y-1 text-xs leading-5 text-[#c8d7ee]">{idea.deliverables.map(item => <li key={item}>• {item}</li>)}</ul></div><div className="mt-3 flex flex-wrap gap-2">{idea.skills.map(skill => <span key={skill} className={`border px-2 py-1 text-xs font-black ${idea.gapSkills.includes(skill) ? "border-[#f4c659] bg-[#584923] text-[#ffe797]" : "border-[#5f739c] bg-[#24385b] text-[#d8e7ff]"}`}>{idea.gapSkills.includes(skill) ? "優先補強 · " : ""}{skill}</span>)}</div></article>)}
+        </div>
+      </div>
+    </div>
+  </Panel>;
 }
 
 function CareerQuestView({ recommendations, careerPath, onCareerPathChange, goals, gpa, credits, completedProjects }: { recommendations: ReturnType<typeof buildCareerRecommendations>; careerPath: CareerPath; onCareerPathChange: (path: CareerPath) => void; goals: GraduationGoals; gpa: number; credits: ReturnType<typeof calculateCredits>; completedProjects: number }) {

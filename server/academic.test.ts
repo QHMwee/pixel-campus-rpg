@@ -23,6 +23,7 @@ import {
   getCcee114CommonEducationProgress,
   getGradePoint,
   getLevel,
+  getCoursePlanSelectionState,
   getTermGpas,
   getTermNumericAverages,
   getXp,
@@ -355,6 +356,23 @@ describe("academic calculations", () => {
     expect(plan.recommendedCourses.find(course => course.name === "Web 前端實作")?.score).toBeGreaterThan(100);
     expect(plan.planningContext).toContain("1 門課");
     expect(plan.goal).toContain("規劃");
+  });
+
+  it("會分辨已規劃與已通過的課程，並保留不及格課程的重新規劃彈性", () => {
+    const passed: CourseRecord[] = [{ id: "passed", term: "114-1", name: "資料結構", credits: 3, grade: "A", category: "required" }];
+    const failed: CourseRecord[] = [{ id: "failed", term: "114-1", name: "電子學", credits: 3, grade: "F", category: "required" }];
+    expect(getCoursePlanSelectionState("資料結構", passed, [])).toBe("completed");
+    expect(getCoursePlanSelectionState(" Web 前端實作 ", [], [{ id: "plan", term: "115-1", name: "Web 前端實作", credits: 3, category: "elective", priority: "important" }])).toBe("planned");
+    expect(getCoursePlanSelectionState("電子學", failed, [])).toBe("available");
+  });
+
+  it("依職涯目標回傳可追溯的職務能力需求與多個可交付專題構想", () => {
+    const plan = buildCareerRecommendations([], [], { total: 128, required: 51, elective: 49, general: 28, semestersLeft: 4 }, "4.3", "data");
+    expect(plan.careerEvidence.url).toContain("onetonline.org");
+    expect(plan.workRequirements.map(item => item.skill)).toContain("資料清理與 SQL／程式處理");
+    expect(plan.projectIdeas).toHaveLength(2);
+    expect(plan.projectIdeas[0]?.deliverables.length).toBeGreaterThanOrEqual(3);
+    expect(plan.projectSuggestion.title).toContain("校園行為資料洞察報告");
   });
 
   it("空白起始不含示範資料、固定使用 4.3 制，並導向課程規劃頁", () => {
