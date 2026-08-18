@@ -43,6 +43,15 @@ export type GraduationGoals = {
   semestersLeft: number;
 };
 
+/** 未選擇系所模板時使用的通用學分目標。 */
+export const defaultGraduationGoals: GraduationGoals = {
+  total: 128,
+  required: 60,
+  elective: 42,
+  general: 26,
+  semestersLeft: 4,
+};
+
 export type Achievement = {
   id: string;
   title: string;
@@ -247,6 +256,49 @@ function parseDelimitedRow(line: string, delimiter: string) {
 
 const nkustTemplateHeaders = ["學年學期", "課號", "科目名稱", "學分", "課程類別", "校區", "授課教師", "星期", "節次", "教室"];
 
+/** 高科大電腦與通訊工程系四技 114 學年度入學課程結構規劃表的畢業學分目標。 */
+export const ccee114GraduationGoals: GraduationGoals = {
+  total: 128,
+  required: 51,
+  elective: 49,
+  general: 28,
+  semestersLeft: 4,
+};
+
+/** 只有使用者確認套用指定模板時才回傳其學分目標；否則保留既有目標。 */
+export function applyGraduationGoalTemplate(current: GraduationGoals, template: "none" | "ccee114") {
+  if (template === "none") return current;
+  return { ...ccee114GraduationGoals, semestersLeft: current.semestersLeft };
+}
+
+/**
+ * 僅收錄官方文件明確列為系必修的 21 門課，合計 51 學分。
+ * 專業選修 49 學分須依個人方向與選課結果規劃，故不以虛構選修填滿。
+ */
+export const ccee114RequiredCoursePlan: readonly NkustPlannedCourseDraft[] = [
+  { term: "114-1", name: "計算機程式設計(一)", credits: 3, category: "required", priority: "must" },
+  { term: "114-1", name: "微積分(一)", credits: 3, category: "required", priority: "must" },
+  { term: "114-1", name: "物理(一)", credits: 3, category: "required", priority: "must" },
+  { term: "114-1", name: "通訊導論", credits: 3, category: "required", priority: "must" },
+  { term: "114-1", name: "網際網路設計實習", credits: 1, category: "required", priority: "must" },
+  { term: "114-1", name: "基礎電工實習(一)", credits: 1, category: "required", priority: "must" },
+  { term: "114-2", name: "計算機程式設計(二)", credits: 3, category: "required", priority: "must" },
+  { term: "114-2", name: "微積分(二)", credits: 3, category: "required", priority: "must" },
+  { term: "114-2", name: "物理(二)", credits: 3, category: "required", priority: "must" },
+  { term: "114-2", name: "多媒體與網路導論", credits: 3, category: "required", priority: "must" },
+  { term: "114-2", name: "電腦與通訊英語", credits: 3, category: "required", priority: "must" },
+  { term: "114-2", name: "程式設計實習", credits: 1, category: "required", priority: "must" },
+  { term: "115-1", name: "電路學(一)", credits: 3, category: "required", priority: "must" },
+  { term: "115-1", name: "數位設計", credits: 3, category: "required", priority: "must" },
+  { term: "115-1", name: "數位設計實習", credits: 1, category: "required", priority: "must" },
+  { term: "115-2", name: "電子電路", credits: 3, category: "required", priority: "must" },
+  { term: "115-2", name: "電子電路實習", credits: 1, category: "required", priority: "must" },
+  { term: "115-2", name: "機率", credits: 3, category: "required", priority: "must" },
+  { term: "116-1", name: "實務專題(一)", credits: 2, category: "required", priority: "must" },
+  { term: "116-1", name: "微處理器應用", credits: 3, category: "required", priority: "must" },
+  { term: "116-2", name: "實務專題(二)", credits: 2, category: "required", priority: "must" },
+];
+
 function nkustHeaderIndex(value: string) {
   const normalized = normalize(value).replace(/[\s_\-（）()]/g, "");
   if (["學年學期", "學期", "學年度", "開課學期", "term", "semester"].includes(normalized)) return "term" as const;
@@ -294,6 +346,13 @@ function isValidPlannedCourse(course: NkustPlannedCourseDraft) {
 
 export function buildNkustTimetableTemplate() {
   return `\uFEFF${nkustTemplateHeaders.map(escapeCsvCell).join(",")}\r\n`;
+}
+
+/** 以既有高科大 CSV 管線載入電通系 114 系必修；匯入前仍可逐列修改或刪除。 */
+export function buildCcee114RequiredCoursePlanCsv() {
+  const header = ["學年學期", "科目名稱", "學分", "課程類別"];
+  const rows = ccee114RequiredCoursePlan.map(course => [course.term, course.name, course.credits, "必修"]);
+  return `\uFEFF${[header, ...rows].map(row => row.map(escapeCsvCell).join(",")).join("\r\n")}\r\n`;
 }
 
 /** 解析高科大課表查詢或範本整理出的 CSV／TSV。隱私欄位未列為對應目標，因此不會保留。 */

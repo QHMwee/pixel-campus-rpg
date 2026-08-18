@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildRecommendations,
   buildCareerRecommendations,
+  applyGraduationGoalTemplate,
+  buildCcee114RequiredCoursePlanCsv,
   buildCoursePlanCalendar,
   buildCoursePlanCsv,
   buildNkustTimetableTemplate,
@@ -23,6 +25,9 @@ import {
   prepareNkustTimetableDraftImport,
   prepareNkustTimetableImport,
   resolveInitialAcademicView,
+  ccee114GraduationGoals,
+  ccee114RequiredCoursePlan,
+  defaultGraduationGoals,
   type CourseRecord,
   type ProjectRecord,
 } from "../shared/academic";
@@ -277,5 +282,22 @@ describe("academic calculations", () => {
     const template = buildNkustTimetableTemplate();
     expect(template).toContain('\uFEFF"學年學期","課號","科目名稱","學分"');
     expect(template.trim().split(/\r?\n/)).toHaveLength(1);
+  });
+
+  it("可依電通系 114 官方結構建立 21 門、51 學分的系必修草稿，且不虛構選修課", () => {
+    expect(ccee114GraduationGoals).toEqual({ total: 128, required: 51, elective: 49, general: 28, semestersLeft: 4 });
+    expect(ccee114RequiredCoursePlan).toHaveLength(21);
+    expect(ccee114RequiredCoursePlan.reduce((sum, course) => sum + course.credits, 0)).toBe(51);
+    expect(ccee114RequiredCoursePlan.every(course => course.category === "required" && course.priority === "must")).toBe(true);
+    const preview = prepareNkustTimetableImport(buildCcee114RequiredCoursePlanCsv(), []);
+    expect(preview.toImport).toHaveLength(21);
+    expect(preview.toImport.reduce((sum, course) => sum + course.credits, 0)).toBe(51);
+    expect(preview.toImport.some(course => course.category === "elective")).toBe(false);
+  });
+
+  it("只在確認電通系 114 模板時才改寫學分目標", () => {
+    const existing = { ...defaultGraduationGoals, semestersLeft: 3 };
+    expect(applyGraduationGoalTemplate(existing, "none")).toEqual(existing);
+    expect(applyGraduationGoalTemplate(existing, "ccee114")).toEqual({ ...ccee114GraduationGoals, semestersLeft: 3 });
   });
 });
