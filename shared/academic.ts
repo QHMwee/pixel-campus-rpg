@@ -269,6 +269,23 @@ export const ccee114GraduationGoals: GraduationGoals = {
   semestersLeft: 4,
 };
 
+export type Ccee114CommonEducationProgress = {
+  id: "chinese" | "english" | "liberal" | "school";
+  label: string;
+  target: number;
+  credits: number;
+  remaining: number;
+  detail: string;
+};
+
+/** 電通系 114 校共同與通識 28 學分的細項目標；博雅須至少涵蓋三個不同課群。 */
+export const ccee114CommonEducationTargets = {
+  chinese: 4,
+  english: 8,
+  liberal: 14,
+  school: 2,
+} as const;
+
 /** 只有使用者確認套用指定模板時才回傳其學分目標；否則保留既有目標。 */
 export function applyGraduationGoalTemplate(current: GraduationGoals, template: "none" | "ccee114") {
   if (template === "none") return current;
@@ -644,6 +661,10 @@ function isPassingCourse(course: Pick<CourseRecord, "name" | "credits" | "grade"
   return isCountableCourse(course) && getGradePoint(course.grade, "4.0") > 0;
 }
 
+function countsTowardGraduation(course: CourseRecord): boolean {
+  return isPassingCourse(course) && course.recognition !== "gpa-only" && course.recognition !== "pending";
+}
+
 export function calculateGpa(courses: CourseRecord[], system: GradePointSystem) {
   const attemptedCourses = courses.filter(isCountableCourse);
   const attemptedCredits = attemptedCourses.reduce((sum, course) => sum + course.credits, 0);
@@ -664,7 +685,7 @@ export function getTermGpas(courses: CourseRecord[], system: GradePointSystem) {
 }
 
 export function calculateCredits(courses: CourseRecord[]) {
-  return courses.filter(course => isPassingCourse(course) && course.recognition !== "gpa-only" && course.recognition !== "pending").reduce(
+  return courses.filter(countsTowardGraduation).reduce(
     (totals, course) => {
       totals.total += course.credits;
       totals[course.category] += course.credits;
@@ -672,6 +693,27 @@ export function calculateCredits(courses: CourseRecord[]) {
     },
     { total: 0, required: 0, elective: 0, general: 0 },
   );
+}
+
+/**
+ * 將已計入畢業學分的校共同／通識課，依電通系 114 結構拆成可讀的完成進度。
+ * 「博雅」與「數位通識」會一併列入 14 學分的博雅通識；括號內文字用於檢查至少三個課群。
+ */
+export function getCcee114CommonEducationProgress(courses: CourseRecord[]): Ccee114CommonEducationProgress[] {
+  const eligible = courses.filter(course => countsTowardGraduation(course) && course.category === "general");
+  const chinese = eligible.filter(course => /^中文閱讀與表達\([一二]\)$/.test(course.name));
+  const english = eligible.filter(course => /^實用英文\([一二三四]\)$/.test(course.name));
+  const school = eligible.filter(course => /^校訂\(/.test(course.name));
+  const liberal = eligible.filter(course => /^(博雅|數位通識)\(/.test(course.name));
+  const sumCredits = (items: CourseRecord[]) => items.reduce((total, course) => total + course.credits, 0);
+  const liberalGroups = Array.from(new Set(liberal.map(course => course.name.match(/^[^(]+\(([^)]+)\)/)?.[1]).filter((value): value is string => Boolean(value))));
+  const rows = [
+    { id: "chinese" as const, label: "中文閱讀與表達", target: ccee114CommonEducationTargets.chinese, credits: sumCredits(chinese), detail: "大一兩學期必修，共 4 學分" },
+    { id: "english" as const, label: "實用英文", target: ccee114CommonEducationTargets.english, credits: sumCredits(english), detail: "大一至大二四學期必修，共 8 學分" },
+    { id: "liberal" as const, label: "博雅通識", target: ccee114CommonEducationTargets.liberal, credits: sumCredits(liberal), detail: `至少三個不同課群；目前 ${liberalGroups.length} 個：${liberalGroups.length ? liberalGroups.join("、") : "尚未累積"}` },
+    { id: "school" as const, label: "校訂通識", target: ccee114CommonEducationTargets.school, credits: sumCredits(school), detail: "校訂通識至少 2 學分" },
+  ];
+  return rows.map(row => ({ ...row, remaining: Math.max(0, row.target - row.credits) }));
 }
 
 /** 預計修課只用於規劃對照，不會被視為已完成學分或影響 GPA。 */

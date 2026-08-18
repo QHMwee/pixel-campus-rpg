@@ -16,6 +16,7 @@ import {
   getCalendarReadyPlanCourses,
   getAchievements,
   getAcademicSkills,
+  getCcee114CommonEducationProgress,
   getGradePoint,
   getLevel,
   getTermGpas,
@@ -199,6 +200,28 @@ describe("academic calculations", () => {
     const pending: CourseRecord[] = [{ id: "pending-transfer", term: "114-1", name: "待確認外系課", credits: 3, grade: "A", category: "elective", recognition: "pending" }];
     expect(calculateGpa(pending, "4.3")).toBe(4);
     expect(calculateCredits(pending)).toEqual({ total: 0, required: 0, elective: 0, general: 0 });
+  });
+
+  it("依電通系 114 結構分別追蹤中文、英文、博雅課群與校訂通識，且僅計入已認列畢業學分", () => {
+    const commonCourses: CourseRecord[] = [
+      { id: "cn1", term: "114-1", name: "中文閱讀與表達(一)", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "cn2", term: "114-2", name: "中文閱讀與表達(二)", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "en1", term: "114-1", name: "實用英文(一)", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "en2", term: "114-2", name: "實用英文(二)", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "social", term: "114-1", name: "博雅(社會)設計人生", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "global", term: "114-2", name: "博雅(全球)永續發展導論", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "history", term: "114-2", name: "博雅(歷史)海洋文明發展", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "tech1", term: "114-1", name: "數位通識(科技)-大數據", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "tech2", term: "114-2", name: "數位通識(科技)-人可以貌相", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "school", term: "114-1", name: "校訂(六)創意與創新", credits: 2, grade: "A", category: "general", recognition: "standard" },
+      { id: "excluded", term: "114-1", name: "博雅(藝術)待確認課", credits: 2, grade: "A", category: "general", recognition: "gpa-only" },
+    ];
+    expect(getCcee114CommonEducationProgress(commonCourses)).toEqual([
+      { id: "chinese", label: "中文閱讀與表達", target: 4, credits: 4, remaining: 0, detail: "大一兩學期必修，共 4 學分" },
+      { id: "english", label: "實用英文", target: 8, credits: 4, remaining: 4, detail: "大一至大二四學期必修，共 8 學分" },
+      { id: "liberal", label: "博雅通識", target: 14, credits: 10, remaining: 4, detail: "至少三個不同課群；目前 4 個：社會、全球、歷史、科技" },
+      { id: "school", label: "校訂通識", target: 2, credits: 2, remaining: 0, detail: "校訂通識至少 2 學分" },
+    ]);
   });
 
   it("拒絕超出 0–100 的數字成績，並正確將 57 分轉為 D+", () => {
