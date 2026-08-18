@@ -14,6 +14,9 @@ export type LetterGrade =
   | "D"
   | "F";
 
+/** 轉系或外系課程在轉入系畢業學分上的認列狀態；不影響正式成績的 GPA 計算。 */
+export type CreditRecognition = "standard" | "approved-external" | "pending" | "gpa-only";
+
 export type CourseRecord = {
   id: string;
   term: string;
@@ -21,6 +24,7 @@ export type CourseRecord = {
   credits: number;
   grade: LetterGrade;
   category: CourseCategory;
+  recognition?: CreditRecognition;
 };
 
 export type ProjectStatus = "planning" | "active" | "done";
@@ -648,7 +652,7 @@ export function getTermGpas(courses: CourseRecord[], system: GradePointSystem) {
 }
 
 export function calculateCredits(courses: CourseRecord[]) {
-  return courses.filter(isPassingCourse).reduce(
+  return courses.filter(course => isPassingCourse(course) && course.recognition !== "gpa-only" && course.recognition !== "pending").reduce(
     (totals, course) => {
       totals.total += course.credits;
       totals[course.category] += course.credits;

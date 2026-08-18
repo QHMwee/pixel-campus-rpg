@@ -164,6 +164,32 @@ describe("academic calculations", () => {
     expect(getGradePoint("A+", "4.3")).toBe(4.3);
   });
 
+  it("轉系前與外系課程仍納入 GPA，但僅 GPA 認列狀態不增加轉入系畢業學分", () => {
+    const transferred: CourseRecord[] = [
+      { id: "recognized", term: "114-1", name: "已認列外系課", credits: 3, grade: "A", category: "elective", recognition: "approved-external" },
+      { id: "gpa-only", term: "114-1", name: "未認列外系課", credits: 3, grade: "B", category: "elective", recognition: "gpa-only" },
+    ];
+    expect(calculateGpa(transferred, "4.3")).toBe(3.5);
+    expect(calculateCredits(transferred)).toEqual({ total: 3, required: 0, elective: 3, general: 0 });
+  });
+
+  it("轉系課程即使認列狀態不同仍按同學期與課名略過重複，待確認認列只先計入 GPA", () => {
+    const existing: CourseRecord[] = [
+      { id: "existing-transfer", term: "114-1", name: "資料科學", credits: 3, grade: "A+", category: "elective", recognition: "approved-external" },
+    ];
+    const draft = [{ term: "114-1", name: "資料科學", credits: 3, grade: "A+" as const, category: "elective" as const, recognition: "gpa-only" as const }];
+    const preview = prepareTranscriptDraftImport(draft, existing);
+    expect(preview.toImport).toHaveLength(0);
+    expect(preview.duplicates).toEqual(draft);
+    const merged = [...existing, ...preview.toImport.map((course, index) => ({ ...course, id: `duplicate-${index}` }))];
+    expect(calculateGpa(merged, "4.3")).toBe(4.3);
+    expect(calculateCredits(merged)).toEqual({ total: 3, required: 0, elective: 3, general: 0 });
+
+    const pending: CourseRecord[] = [{ id: "pending-transfer", term: "114-1", name: "待確認外系課", credits: 3, grade: "A", category: "elective", recognition: "pending" }];
+    expect(calculateGpa(pending, "4.3")).toBe(4);
+    expect(calculateCredits(pending)).toEqual({ total: 0, required: 0, elective: 0, general: 0 });
+  });
+
   it("拒絕超出 0–100 的數字成績，並正確將 57 分轉為 D+", () => {
     const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別\n115-1,及格邊界,3,57,必修\n115-1,無效分數,3,101,選修", []);
     expect(preview.toImport).toEqual([{ term: "115-1", name: "及格邊界", credits: 3, grade: "D+", category: "required" }]);
