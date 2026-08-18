@@ -28,6 +28,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { NkustTimetableImportDialog } from "@/components/NkustTimetableImportDialog";
 import { TranscriptImportDialogV2 } from "@/components/TranscriptImportDialog";
 import { trpc } from "@/lib/trpc";
+import { decodeFragmentTranscriptImport } from "@shared/fragmentImport";
 import {
   buildCareerRecommendations,
   applyGraduationGoalTemplate,
@@ -256,7 +257,7 @@ export default function Home() {
   const [data, setData] = useState<QuestData>(loadData);
   const [activeView, setActiveView] = useState<View>(() => {
     const requested = window.location.hash.replace("#", "") as View;
-    return resolveInitialAcademicView(requested, data.hasCompletedPlanIntro, navItems.map(item => item.id)) as View;
+    return resolveInitialAcademicView(requested.startsWith("cq-import=") ? "grades" : requested, data.hasCompletedPlanIntro, navItems.map(item => item.id)) as View;
   });
   const [courseForm, setCourseForm] = useState<Omit<CourseRecord, "id"> | null>(null);
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
@@ -278,6 +279,7 @@ export default function Home() {
   const [nkustImportMode, setNkustImportMode] = useState<"timetable" | "ccee114">("timetable");
   const [importReport, setImportReport] = useState<{ courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null>(null);
   const mounted = useRef(false);
+  const fragmentImportHandled = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
   const pdfConverter = trpc.transcriptPdf.convert.useMutation({
     onSuccess: (result: { csv: string; summary: string; source: "ai" | "local" }) => {
@@ -327,7 +329,29 @@ export default function Home() {
   }), [academicSkills, credits.total, data.careerPath, data.courses, data.goals.semestersLeft, data.goals.total, data.projects, data.system, gpa, recommendationPreferences, termGpas, unlockedAchievements.length]);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
-  useEffect(() => { window.history.replaceState(null, "", activeView === "dashboard" ? "/" : `/#${activeView}`); }, [activeView]);
+  useEffect(() => {
+    if (window.location.hash.startsWith("#cq-import=")) return;
+    window.history.replaceState(null, "", activeView === "dashboard" ? "/" : `/#${activeView}`);
+  }, [activeView]);
+
+  useEffect(() => {
+    if (fragmentImportHandled.current) return;
+    fragmentImportHandled.current = true;
+    const fragmentCourses = decodeFragmentTranscriptImport(window.location.hash.slice(1));
+    if (!fragmentCourses) return;
+    const preview = prepareTranscriptDraftImport(fragmentCourses, data.courses);
+    const imported = preview.toImport.map(course => ({ ...course, id: crypto.randomUUID() }));
+    if (imported.length) {
+      const beforeSkills = new Set(getAcademicSkills(data.courses).map(skill => skill.name));
+      const combinedCourses = [...data.courses, ...imported];
+      const gainedSkills = getAcademicSkills(combinedCourses).map(skill => skill.name).filter(skill => !beforeSkills.has(skill));
+      const nextXp = getXp(combinedCourses, data.projects);
+      setImportReport({ courseCount: imported.length, skillNames: gainedSkills, xpGain: nextXp - getXp(data.courses, data.projects), leveledUp: getLevel(nextXp).level > getLevel(getXp(data.courses, data.projects)).level });
+      setData(current => ({ ...current, courses: [...current.courses, ...imported], hasCompletedPlanIntro: true }));
+    }
+    setActiveView("grades");
+    window.history.replaceState(null, "", "/#grades");
+  }, []);
 
   useEffect(() => {
     const current = unlockedAchievements.map(achievement => achievement.id);
