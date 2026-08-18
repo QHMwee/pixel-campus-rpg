@@ -242,6 +242,16 @@ export function resolveInitialAcademicView(requestedView: string, hasCompletedPl
   return hasCompletedPlanIntro ? "dashboard" : "plan";
 }
 
+/**
+ * 判斷網址片段應切換至一般檢視，或保留給一次性成績匯入流程處理。
+ * 一次性匯入片段不會被當成未知頁面導回首頁，避免中斷解碼與合併。
+ */
+export function resolveAcademicHashNavigation(hash: string, hasCompletedPlanIntro: boolean, supportedViews: readonly string[]) {
+  const fragment = hash.replace(/^#/, "");
+  if (fragment.startsWith("cq-import")) return { type: "fragment-import" as const };
+  return { type: "view" as const, view: resolveInitialAcademicView(fragment, hasCompletedPlanIntro, supportedViews) };
+}
+
 function parseDelimitedRow(line: string, delimiter: string) {
   const values: string[] = [];
   let current = "";
@@ -502,6 +512,24 @@ export function normalizeUndeclaredRequiredCategory<T extends { category: Course
 
 export function migrateUndeclaredRequiredCourses(courses: CourseRecord[]) {
   return courses.map(normalizeUndeclaredRequiredCategory);
+}
+
+/** 建立成績編輯器草稿時保留認列狀態，並將舊版僅計 GPA 資料統一遷移為不分系必修。 */
+export function createCourseEditorDraft(course: CourseRecord): Omit<CourseRecord, "id"> {
+  const normalized = normalizeUndeclaredRequiredCategory(course);
+  const { id: _id, ...draft } = normalized;
+  return draft;
+}
+
+/** 將轉系課程認列狀態整理為學分地圖可共用的摘要；不分系必修固定獨立處理。 */
+export function getCreditRecognitionSummary(courses: CourseRecord[]) {
+  const undeclared = courses.filter(course => course.category === "undeclared-required");
+  const transferable = courses.filter(course => course.category !== "undeclared-required");
+  return {
+    approvedExternal: transferable.filter(course => course.recognition === "approved-external"),
+    pending: transferable.filter(course => course.recognition === "pending"),
+    undeclared,
+  };
 }
 
 function transcriptCategory(value: string | undefined, name: string): CourseCategory {

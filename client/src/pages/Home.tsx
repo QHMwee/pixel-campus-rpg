@@ -42,6 +42,7 @@ import {
   ccee114CommonEducationTargets,
   ccee114GraduationGoals,
   createBlankAcademicStart,
+  createCourseEditorDraft,
   defaultGraduationGoals,
   defaultRecommendationPreferences,
   calculateGpa,
@@ -50,6 +51,7 @@ import {
   getGradePoint,
   getLevel,
   getCreditPlanStatus,
+  getCreditRecognitionSummary,
   getCcee114CommonEducationProgress,
   getCalendarReadyPlanCourses,
   getExportablePlanCourses,
@@ -63,6 +65,7 @@ import {
   prepareNkustTimetableImport,
   prepareTranscriptImport,
   prepareTranscriptDraftImport,
+  resolveAcademicHashNavigation,
   resolveInitialAcademicView,
   transcriptFieldLabels,
   type CourseCategory,
@@ -335,15 +338,15 @@ export default function Home() {
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
   useEffect(() => {
-    if (window.location.hash.startsWith("#cq-import")) return;
-    window.history.replaceState(null, "", activeView === "dashboard" ? "/" : `/#${activeView}`);
-  }, [activeView]);
-
-  useEffect(() => {
-    const handleHashChange = () => setFragmentHash(window.location.hash);
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      setFragmentHash(hash);
+      const navigation = resolveAcademicHashNavigation(hash, data.hasCompletedPlanIntro, navItems.map(item => item.id));
+      if (navigation.type === "view") setActiveView(navigation.view as View);
+    };
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
-  }, []);
+  }, [data.hasCompletedPlanIntro]);
 
   useEffect(() => {
     if (!fragmentHash.startsWith("#cq-import") || fragmentImportInFlight.current) return;
@@ -399,10 +402,16 @@ export default function Home() {
     }
   }, [achievements, unlockedAchievements]);
 
+  function navigateToView(view: View) {
+    setActiveView(view);
+    const nextUrl = view === "dashboard" ? "/" : `/#${view}`;
+    if (`${window.location.pathname}${window.location.hash}` !== nextUrl) window.history.pushState(null, "", nextUrl);
+  }
+
   function resetQuest() {
     if (window.confirm("確定要清除這台裝置上的課程、成績與專題紀錄，重新開始規劃嗎？")) {
       setData(emptyQuestData);
-      setActiveView("plan");
+      navigateToView("plan");
       setCourseForm(null);
       setProjectForm(null);
     }
@@ -422,7 +431,7 @@ export default function Home() {
 
   function completePlanIntro() {
     setData(current => ({ ...current, hasCompletedPlanIntro: true }));
-    setActiveView("dashboard");
+    navigateToView("dashboard");
   }
 
   function exportCoursePlanCsv() {
@@ -555,7 +564,7 @@ export default function Home() {
 
   function openCourseEditor(course?: CourseRecord) {
     setEditingCourseId(course?.id ?? null);
-    setCourseForm(course ? { term: course.term, name: course.name, credits: course.credits, grade: course.grade, category: course.category } : emptyCourse());
+    setCourseForm(course ? createCourseEditorDraft(course) : emptyCourse());
   }
 
   function openProjectEditor(project?: ProjectRecord) {
@@ -656,7 +665,7 @@ export default function Home() {
     <main className="min-h-screen overflow-x-hidden pb-10">
       <div className="mx-auto max-w-[1600px] px-3 py-3 sm:px-5 lg:px-7 lg:py-6">
         <header className="pixel-panel scanline flex flex-col gap-4 bg-[#17243f] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-          <button onClick={() => setActiveView(data.hasCompletedPlanIntro ? "dashboard" : "plan")} className="flex items-center gap-3 text-left" aria-label="前往主要頁面">
+            <button onClick={() => navigateToView(data.hasCompletedPlanIntro ? "dashboard" : "plan")} className="flex items-center gap-3 text-left" aria-label="前往主要頁面">
             <span className="crest flex h-12 w-12 items-center justify-center bg-[#f4c659] text-[#1d3153] shadow-[3px_3px_0_#080d1f]"><GraduationCap size={27} strokeWidth={2.8} /></span>
             <span>
               <span className="pixel-font block text-[10px] leading-6 text-[#f4c659]">CAMPUS QUEST</span>
@@ -682,7 +691,7 @@ export default function Home() {
               {navItems.map(item => {
                 const Icon = item.icon;
                 const isActive = activeView === item.id;
-                return <button key={item.id} onClick={() => setActiveView(item.id)} className={`pixel-corners flex items-center gap-3 px-3 py-3 text-left text-sm font-bold transition-colors ${isActive ? "bg-[#f4c659] text-[#16233f] shadow-[3px_3px_0_#080d1f]" : "text-[#dce7ff] hover:bg-[#293d61]"}`}><Icon size={18} /><span>{item.label}</span>{isActive && <ChevronRight className="ml-auto hidden lg:block" size={16} />}</button>;
+                return <button key={item.id} onClick={() => navigateToView(item.id)} className={`pixel-corners flex items-center gap-3 px-3 py-3 text-left text-sm font-bold transition-colors ${isActive ? "bg-[#f4c659] text-[#16233f] shadow-[3px_3px_0_#080d1f]" : "text-[#dce7ff] hover:bg-[#293d61]"}`}><Icon size={18} /><span>{item.label}</span>{isActive && <ChevronRight className="ml-auto hidden lg:block" size={16} />}</button>;
               })}
             </nav>
             <div className="mt-4 border-t-2 border-[#4b628e] px-3 pt-4">
@@ -701,7 +710,7 @@ export default function Home() {
             </div>
 
             {activeView === "plan" && <><CoursePlanView courses={data.plannedCourses} completedCredits={credits.total} plannedCredits={plannedCredits} plannedRequiredCredits={plannedRequiredCredits} goals={data.goals} exportableCount={exportablePlanCourses.length} calendarReadyCount={calendarReadyPlanCourses.length} exportNotice={planExportNotice} onAdd={addPlannedCourse} onUpdate={updatePlannedCourse} onRemove={removePlannedCourse} onExportCsv={exportCoursePlanCsv} onExportNotionCsv={exportNotionCoursePlanCsv} onOpenNotion={openNotionFourYearPlan} onExportCalendar={exportCoursePlanCalendar} onComplete={completePlanIntro} /><Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="NKUST TIMETABLE CSV" title="高科大課表匯入" action={<FileText className="text-[#74e2b1]" />} /><div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto]"><div><p className="text-sm leading-7 text-[#d5e0f2]">可匯入你自行從高科大課程資料查詢整理並另存的 CSV／TSV。系統只讀取學期、課程、學分與類別；任何學號、姓名、成績或缺曠欄位都不會對應或保存。</p><p className="mt-3 border-l-4 border-[#74e2b1] pl-3 text-xs leading-5 text-[#c7f7dc]">先預覽並逐列確認，才會加入本機「規劃中」課程；不會改變 GPA、已完成學分、能力或 XP。</p></div><PixelButton onClick={() => setNkustImportOpen(true)} className="bg-[#245d58] text-[#e1fff6]"><FileText size={16} /> 匯入高科大 CSV</PixelButton></div></Panel></>}
-            {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} skills={academicSkills} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={setActiveView} />}
+            {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} skills={academicSkills} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={navigateToView} />}
             {activeView === "plan" && <Panel gold className="mt-4 overflow-hidden"><PanelTitle eyebrow="CCEE 114 CURRICULUM" title="電通系 114 課程結構" action={<GraduationCap className="text-[#f4c659]" />} /><div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto]"><div><p className="text-sm leading-7 text-[#d5e0f2]">依高科大電腦與通訊工程系四技 114 學年度入學課程結構，畢業目標為總計 128 學分：系必修 51、系專業選修 49、校共同與通識 28。模板只帶入官方明列的 21 門系必修，不會捏造你尚未選定的 49 學分選修。</p><p className="mt-3 border-l-4 border-[#f4c659] pl-3 text-xs leading-5 text-[#ffe9a4]">載入後仍會先顯示逐列草稿；你確認匯入時才更新這台裝置的學分目標與規劃。既有同學期、同課名課程會略過，不會被覆寫。</p></div><PixelButton onClick={openCcee114RequiredPlan} className="bg-[#f4c659] text-[#152544]"><GraduationCap size={16} /> 載入電通 114 必修</PixelButton></div></Panel>}
             {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} fragmentImportError={fragmentImportError} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
@@ -796,7 +805,7 @@ function CourseEditor({ form, editing, setForm, onSave, onCancel }: { form: Omit
 }
 
 function TranscriptMappingWizard({ open, headers, sample, mapping, onChange, onApply, onClose }: { open: boolean; headers: string[]; sample: string[]; mapping: TranscriptFieldMap; onChange: (mapping: TranscriptFieldMap) => void; onApply: () => void; onClose: () => void }) {
-  const fields: TranscriptField[] = ["term", "name", "credits", "grade", "category"];
+  const fields: TranscriptField[] = ["term", "name", "credits", "grade", "category", "recognition"];
   return <Dialog open={open} onOpenChange={next => { if (!next) onClose(); }}><DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-4 border-[#a998ff] bg-[#172640] p-0 text-[#e8f0ff] shadow-[7px_7px_0_#080d1f]"><DialogHeader className="border-b-2 border-[#5b719c] px-5 pb-4 pt-5 text-left"><p className="pixel-font text-[8px] leading-5 text-[#c9bcff]">COLUMN MAPPING WIZARD · STEP 1/2</p><DialogTitle className="text-2xl font-black text-[#fff8df]">配對成績單欄位</DialogTitle><DialogDescription className="mt-1 text-sm leading-6 text-[#b8c9e6]">系統無法完全辨識標題列。請將來源欄位配對至學業資料；課程名稱、學分、成績為必填，學期與類別可略過。</DialogDescription></DialogHeader><div className="space-y-5 p-5"><div className="overflow-x-auto border-2 border-[#415a86] bg-[#13213b]"><table className="w-full min-w-[560px] text-left text-xs"><thead className="bg-[#263958] text-[#bfcdea]"><tr>{headers.map((header, index) => <th key={`${header}-${index}`} className="px-3 py-2 font-black">#{index + 1} {header || "（空白標題）"}</th>)}</tr></thead><tbody><tr>{headers.map((_, index) => <td key={index} className="border-t-2 border-[#334b73] px-3 py-2 text-[#d9e5fa]">{sample[index] || "—"}</td>)}</tr></tbody></table></div><div className="grid gap-3 sm:grid-cols-2"><p className="sm:col-span-2 text-xs leading-5 text-[#d6caff]"><b className="text-[#ffe797]">必要：</b>課程名稱、學分、成績。每個來源欄位僅能配對一次。</p>{fields.map(field => <Field key={field} label={`${transcriptFieldLabels[field]}${["name", "credits", "grade"].includes(field) ? "（必要）" : "（選填）"}`}><select value={mapping[field] === undefined ? "none" : String(mapping[field])} onChange={event => { const value = event.target.value; onChange({ ...mapping, [field]: value === "none" ? undefined : Number(value) }); }} className="pixel-input w-full px-3 py-2.5"><option value="none">不對應</option>{headers.map((header, index) => <option key={`${header}-${index}`} value={index}>#{index + 1} · {header || "（空白標題）"}</option>)}</select></Field>)}</div></div><DialogFooter className="border-t-2 border-[#5b719c] px-5 py-4"><PixelButton onClick={onClose} className="bg-[#33486c]"><X size={16} /> 返回修改資料</PixelButton><PixelButton onClick={onApply} className="bg-[#f4c659] text-[#152544]"><ShieldCheck size={16} /> 套用配對並預覽</PixelButton></DialogFooter></DialogContent></Dialog>;
 }
 
@@ -826,9 +835,9 @@ function RecognitionStatusSummaryV2({ courses }: { courses: CourseRecord[] }) {
 }
 
 function CreditRecognitionMapV2({ courses }: { courses: CourseRecord[] }) {
-  const external = courses.filter(course => course.category !== "undeclared-required" && course.recognition === "approved-external");
-  const undeclared = courses.filter(course => course.category === "undeclared-required");
-  return <Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="TRANSFER CREDIT MAP" title="轉系與外系學分狀態" action={<ScrollText className="text-[#74e2b1]" />} /><div className="p-5"><p className="text-sm leading-7 text-[#c8d7ec]">已認列的外系課會納入電通系畢業進度；不分系必修則只保留在 GPA 與成績卷軸，不會增加任何電通系畢業學分。</p>{external.length || undeclared.length ? <div className="mt-4 grid gap-3 md:grid-cols-2">{external.length > 0 && <div className="border-2 border-[#74e2b1] bg-[#1d4b44] p-4 text-[#c7f7dc]"><p className="font-black">外系已認列</p><p className="mt-2 text-xs leading-5">{external.length} 門 · {external.reduce((total, course) => total + course.credits, 0)} 學分</p><p className="mt-2 text-xs leading-5">已納入電通系畢業學分</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{external.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}{undeclared.length > 0 && <div className="border-2 border-[#cf9bc9] bg-[#402d47] p-4 text-[#ffe0fa]"><p className="font-black">不分系必修</p><p className="mt-2 text-xs leading-5">{undeclared.length} 門 · {undeclared.reduce((total, course) => total + course.credits, 0)} 學分</p><p className="mt-2 text-xs leading-5">僅計入 GPA，不納入電通系畢業學分</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{undeclared.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}</div> : <p className="mt-4 border-2 border-dashed border-[#4d638d] p-3 text-xs leading-5 text-[#9dafcf]">尚未標記外系認列或不分系必修課程。</p>}</div></Panel>;
+  const { approvedExternal, pending, undeclared } = getCreditRecognitionSummary(courses);
+  const creditTotal = (items: CourseRecord[]) => items.reduce((total, course) => total + course.credits, 0);
+  return <Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="TRANSFER CREDIT MAP" title="轉系與外系學分狀態" action={<ScrollText className="text-[#74e2b1]" />} /><div className="p-5"><p className="text-sm leading-7 text-[#c8d7ec]">已認列的外系課會納入電通系畢業進度；待確認認列與不分系必修都會保留在 GPA 與成績卷軸，但暫不增加畢業學分。</p>{approvedExternal.length || pending.length || undeclared.length ? <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{approvedExternal.length > 0 && <div className="border-2 border-[#74e2b1] bg-[#1d4b44] p-4 text-[#c7f7dc]"><p className="font-black">外系已認列</p><p className="mt-2 text-xs leading-5">{approvedExternal.length} 門 · {creditTotal(approvedExternal)} 學分</p><p className="mt-2 text-xs leading-5">已納入電通系畢業學分</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{approvedExternal.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}{pending.length > 0 && <div className="border-2 border-[#f4c659] bg-[#4c4024] p-4 text-[#ffe797]"><p className="font-black">待確認認列</p><p className="mt-2 text-xs leading-5">{pending.length} 門 · {creditTotal(pending)} 學分</p><p className="mt-2 text-xs leading-5">計入 GPA，暫不納入電通系畢業學分</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{pending.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}{undeclared.length > 0 && <div className="border-2 border-[#cf9bc9] bg-[#402d47] p-4 text-[#ffe0fa]"><p className="font-black">不分系必修</p><p className="mt-2 text-xs leading-5">{undeclared.length} 門 · {creditTotal(undeclared)} 學分</p><p className="mt-2 text-xs leading-5">僅計入 GPA，不納入電通系畢業學分</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{undeclared.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}</div> : <p className="mt-4 border-2 border-dashed border-[#4d638d] p-3 text-xs leading-5 text-[#9dafcf]">尚未標記外系認列、待確認認列或不分系必修課程。</p>}</div></Panel>;
 }
 
 function CreditPlanningSummary({ status }: { status: ReturnType<typeof getCreditPlanStatus> }) {

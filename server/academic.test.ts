@@ -9,10 +9,12 @@ import {
   buildNkustTimetableTemplate,
   buildNotionCoursePlanCsv,
   calculateCredits,
+  createCourseEditorDraft,
   calculatePlannedCredits,
   calculateGpa,
   createBlankAcademicStart,
   getCreditPlanStatus,
+  getCreditRecognitionSummary,
   getCalendarReadyPlanCourses,
   getAchievements,
   getAcademicSkills,
@@ -27,6 +29,7 @@ import {
   prepareTranscriptImport,
   prepareNkustTimetableDraftImport,
   prepareNkustTimetableImport,
+  resolveAcademicHashNavigation,
   resolveInitialAcademicView,
   ccee114GraduationGoals,
   ccee114RequiredCoursePlan,
@@ -167,6 +170,28 @@ describe("academic calculations", () => {
     expect(mapped.toImport).toEqual([{ term: "未指定", name: "資料庫系統", credits: 3, grade: "A+", category: "elective" }]);
   });
 
+  it("可手動對應非標準畢業認列欄位，並保留外系已認列狀態", () => {
+    const text = "學程,科目,分數,點數,分類,審核結果\n114-1,資料探勘,95,3,選修,外系已認列";
+    const mapped = prepareTranscriptImport(text, [], { term: 0, name: 1, grade: 2, credits: 3, category: 4, recognition: 5 });
+    expect(mapped.toImport).toEqual([{ term: "114-1", name: "資料探勘", credits: 3, grade: "A+", category: "elective", recognition: "approved-external" }]);
+  });
+
+  it("成績編輯草稿會保留既有認列狀態，並將舊版僅計 GPA 正規化", () => {
+    expect(createCourseEditorDraft({ id: "external", term: "114-1", name: "資料科學", credits: 3, grade: "A", category: "elective", recognition: "approved-external" })).toMatchObject({ recognition: "approved-external", category: "elective" });
+    expect(createCourseEditorDraft({ id: "legacy", term: "114-1", name: "不分系導航", credits: 1, grade: "A", category: "elective", recognition: "gpa-only" })).toMatchObject({ recognition: "standard", category: "undeclared-required" });
+  });
+
+  it("認列摘要會分別保留已認列、待確認與不分系必修課程", () => {
+    const summary = getCreditRecognitionSummary([
+      { id: "approved", term: "114-1", name: "已認列課", credits: 3, grade: "A", category: "elective", recognition: "approved-external" },
+      { id: "pending", term: "114-1", name: "待確認課", credits: 2, grade: "A", category: "elective", recognition: "pending" },
+      { id: "undeclared", term: "114-1", name: "不分系必修", credits: 1, grade: "A", category: "undeclared-required", recognition: "standard" },
+    ]);
+    expect(summary.approvedExternal.map(course => course.name)).toEqual(["已認列課"]);
+    expect(summary.pending.map(course => course.name)).toEqual(["待確認課"]);
+    expect(summary.undeclared.map(course => course.name)).toEqual(["不分系必修"]);
+  });
+
   it("以所有有效嘗試學分加權 GPA，但只將及格課程計入畢業學分與 XP", () => {
     const mixedCourses: CourseRecord[] = [
       { id: "pass", term: "115-1", name: "統計學", credits: 3, grade: "A", category: "required" },
@@ -301,6 +326,16 @@ describe("academic calculations", () => {
     expect(resolveInitialAcademicView("", false, ["plan", "dashboard"])).toBe("plan");
     expect(resolveInitialAcademicView("", true, ["plan", "dashboard"])).toBe("dashboard");
     expect(resolveInitialAcademicView("dashboard", false, ["plan", "dashboard"])).toBe("dashboard");
+  });
+
+  it("會將一般網址片段解析為對應檢視，並保留一次性匯入片段給匯入流程", () => {
+    const views = ["plan", "dashboard", "grades", "credits", "quest"];
+    expect(resolveAcademicHashNavigation("#plan", true, views)).toEqual({ type: "view", view: "plan" });
+    expect(resolveAcademicHashNavigation("#grades", false, views)).toEqual({ type: "view", view: "grades" });
+    expect(resolveAcademicHashNavigation("#credits", true, views)).toEqual({ type: "view", view: "credits" });
+    expect(resolveAcademicHashNavigation("#quest", true, views)).toEqual({ type: "view", view: "quest" });
+    expect(resolveAcademicHashNavigation("#unknown", false, views)).toEqual({ type: "view", view: "plan" });
+    expect(resolveAcademicHashNavigation("#cq-import-gz=compressed", true, views)).toEqual({ type: "fragment-import" });
   });
 
   it("將規劃學分與已完成學分分開計算，並回報規劃後的缺口", () => {
