@@ -122,9 +122,9 @@ export const courseCatalog: CourseCatalogEntry[] = [
 ];
 
 export type TranscriptIssue = { row: number; message: string; raw: string };
-export type TranscriptField = "term" | "name" | "credits" | "grade" | "category";
+export type TranscriptField = "term" | "name" | "credits" | "grade" | "category" | "recognition";
 export type TranscriptFieldMap = Partial<Record<TranscriptField, number>>;
-export const transcriptFieldLabels: Record<TranscriptField, string> = { term: "學期", name: "課程名稱", credits: "學分", grade: "成績", category: "課程類別" };
+export const transcriptFieldLabels: Record<TranscriptField, string> = { term: "學期", name: "課程名稱", credits: "學分", grade: "成績", category: "課程類別", recognition: "畢業認列" };
 export type TranscriptImportPreview = {
   accepted: Omit<CourseRecord, "id">[];
   toImport: Omit<CourseRecord, "id">[];
@@ -436,6 +436,7 @@ function headerIndex(value: string): TranscriptField | undefined {
   if (["學分", "credit", "credits"].includes(normalized)) return "credits";
   if (["成績", "等第", "grade", "lettergrade"].includes(normalized)) return "grade";
   if (["類別", "課程類別", "category", "type"].includes(normalized)) return "category";
+  if (["畢業認列", "學分認列", "認列狀態", "recognition", "creditrecognition"].includes(normalized)) return "recognition";
   return undefined;
 }
 function transcriptGrade(value: string): LetterGrade | undefined {
@@ -455,6 +456,14 @@ function transcriptGrade(value: string): LetterGrade | undefined {
   if (numeric >= 57) return "D+";
   if (numeric >= 50) return "D";
   return "F";
+}
+function transcriptRecognition(value: string): CreditRecognition | undefined {
+  const normalized = normalize(value).replace(/[\s／/_-]/g, "");
+  if (["一般系內", "一般", "standard"].includes(normalized)) return "standard";
+  if (["外系已認列", "approvedexternal"].includes(normalized)) return "approved-external";
+  if (["待確認認列", "pending"].includes(normalized)) return "pending";
+  if (["僅計gpa", "gpaonly"].includes(normalized)) return "gpa-only";
+  return undefined;
 }
 function transcriptCategory(value: string | undefined, name: string): CourseCategory {
   const normalized = normalize(value ?? "");
@@ -495,6 +504,7 @@ export function parseTranscript(text: string, mapping?: TranscriptFieldMap) {
   const gradeIndex = columns.grade!;
   const termIndex = columns.term;
   const categoryIndex = columns.category;
+  const recognitionIndex = columns.recognition;
   const start = hasHeader ? 1 : 0;
   for (let index = start; index < lines.length; index += 1) {
     const row = parseDelimitedRow(lines[index], delimiter);
@@ -502,11 +512,13 @@ export function parseTranscript(text: string, mapping?: TranscriptFieldMap) {
     const term = termIndex === undefined ? "未指定" : row[termIndex] ?? "未指定";
     const credits = Number(row[creditsIndex]);
     const grade = transcriptGrade(row[gradeIndex] ?? "");
-    if (!name.trim() || !Number.isFinite(credits) || credits <= 0 || credits > 12 || !grade) {
+    const recognitionRaw = recognitionIndex === undefined ? "" : row[recognitionIndex] ?? "";
+    const recognition = recognitionRaw.trim() ? transcriptRecognition(recognitionRaw) : undefined;
+    if (!name.trim() || !Number.isFinite(credits) || credits <= 0 || credits > 12 || !grade || (recognitionRaw.trim() && !recognition)) {
       issues.push({ row: index + 1, raw: lines[index], message: "需要有效的課程名稱、1–12 學分與等第（A+～F 或 0–100 分）。" });
       continue;
     }
-    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: transcriptCategory(categoryIndex === undefined ? undefined : row[categoryIndex], name) });
+    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: transcriptCategory(categoryIndex === undefined ? undefined : row[categoryIndex], name), ...(recognition ? { recognition } : {}) });
   }
   return { accepted, issues, headers, sample, needsMapping: false, mapping: columns };
 }

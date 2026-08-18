@@ -55,7 +55,7 @@ export function TranscriptImportDialogV2(props: TranscriptImportDialogProps) {
       <div className="space-y-4 p-5">
         <div className="grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
           <Field label="貼上成績資料">
-            <textarea value={text} onChange={event => onTextChange(event.target.value)} rows={9} placeholder={"學期,課程名稱,學分,成績,類別\n115-1,統計學,3,A,必修\n115-1,資料庫系統,3,88,選修"} className="pixel-input min-h-48 w-full resize-y px-3 py-3 font-mono text-xs leading-6" />
+            <textarea value={text} onChange={event => onTextChange(event.target.value)} rows={9} placeholder={"學期,課程名稱,學分,成績,類別,畢業認列\n115-1,統計學,3,A,必修,外系已認列\n115-1,資料庫系統,3,88,選修,待確認認列"} className="pixel-input min-h-48 w-full resize-y px-3 py-3 font-mono text-xs leading-6" />
           </Field>
           <div className="space-y-3">
             <div className="border-2 border-dashed border-[#637aa4] bg-[#13213b] p-4">
@@ -68,7 +68,7 @@ export function TranscriptImportDialogV2(props: TranscriptImportDialogProps) {
               <p className="mt-2 text-xs leading-5 text-[#cfc7f5]">支援可選取文字的 PDF，最大 2 MB。轉換後仍須逐列確認，不保留原始檔。</p>
               <label className={`pixel-button pixel-corners mt-4 inline-flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-bold ${isPdfConverting ? "cursor-wait bg-[#4c427b] text-[#ded6ff]" : "bg-[#5a48b9] text-[#fff8df]"}`}><FileText size={16} /> {isPdfConverting ? "AI 轉換中…" : "選擇 PDF 成績單"}<input type="file" accept=".pdf,application/pdf" disabled={isPdfConverting} onChange={onPdfChange} className="sr-only" /></label>
             </div>
-            <div className="border-l-4 border-[#a998ff] pl-3 text-xs leading-5 text-[#d7ceff]"><p className="font-black">匯入安全規則</p><p className="mt-1">GPA 以有效嘗試學分加權；畢業學分、能力與 XP 僅計入及格課程。相同學期＋課程名稱會標示為重複，不覆蓋既有紀錄。</p></div>
+            <div className="border-l-4 border-[#a998ff] pl-3 text-xs leading-5 text-[#d7ceff]"><p className="font-black">匯入安全規則</p><p className="mt-1">CSV 可選填「畢業認列」欄，自動帶入一般／系內、外系已認列、待確認認列或僅計 GPA；仍可在草稿逐列修改。GPA 以有效嘗試學分加權；畢業學分、能力與 XP 僅計入及格課程。相同學期＋課程名稱會標示為重複，不覆蓋既有紀錄。</p></div>
           </div>
         </div>
 

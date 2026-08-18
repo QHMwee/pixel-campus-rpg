@@ -119,6 +119,17 @@ describe("academic calculations", () => {
     expect(getAcademicSkills([...courses, ...preview.toImport.map((course, index) => ({ ...course, id: `import-${index}` }))]).map(skill => skill.name)).toEqual(expect.arrayContaining(["統計", "數據判讀"]));
   });
 
+  it("會從成績單 CSV 的畢業認列欄帶入外系已認列與待確認狀態", () => {
+    const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別,畢業認列\n114-1,微積分(一),3,90,必修,外系已認列\n114-1,資料科學,3,100,選修,待確認認列", []);
+    expect(preview.issues).toHaveLength(0);
+    expect(preview.toImport).toEqual([
+      { term: "114-1", name: "微積分(一)", credits: 3, grade: "A+", category: "required", recognition: "approved-external" },
+      { term: "114-1", name: "資料科學", credits: 3, grade: "A+", category: "elective", recognition: "pending" },
+    ]);
+    const imported = preview.toImport.map((course, index) => ({ ...course, id: `recognized-${index}` }));
+    expect(calculateCredits(imported)).toEqual({ total: 3, required: 3, elective: 0, general: 0 });
+  });
+
   it("會依及格門檻與成績權重判定能力熟練度，並以匯入課程推進角色等級", () => {
     const skillCourses: CourseRecord[] = [
       { id: "pass", term: "115-1", name: "統計學", credits: 3, grade: "A", category: "required" },
