@@ -4,8 +4,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { gradeOptions, type CourseCategory, type CourseRecord, type CreditRecognition, type LetterGrade, type TranscriptImportPreview } from "@shared/academic";
 
 const categoryLabel: Record<CourseCategory, string> = {
-  required: "必修",
-  elective: "選修",
+  required: "電通系必修",
+  elective: "專業選修",
+  common: "校內共同必修",
   general: "通識",
 };
 const recognitionLabel: Record<CreditRecognition, string> = {

@@ -1,4 +1,4 @@
-import { applyGraduationGoalTemplate, calculateCredits, prepareTranscriptDraftImport, type CourseRecord, type GraduationGoals } from "./academic";
+import { applyGraduationGoalTemplate, calculateCredits, migrateCceeCommonRequiredCourses, normalizeCceeCommonRequiredCategory, prepareTranscriptDraftImport, type CourseRecord, type GraduationGoals } from "./academic";
 
 export type FragmentTranscriptPayload = {
   version: 1;
@@ -18,9 +18,11 @@ export function mergeFragmentTranscriptImport(
   currentGoals: GraduationGoals,
   createId: () => string,
 ): FragmentImportMergeResult {
-  const preview = prepareTranscriptDraftImport(incomingCourses, existingCourses);
+  const normalizedExistingCourses = migrateCceeCommonRequiredCourses(existingCourses);
+  const normalizedIncomingCourses = incomingCourses.map(normalizeCceeCommonRequiredCategory);
+  const preview = prepareTranscriptDraftImport(normalizedIncomingCourses, normalizedExistingCourses);
   const imported = preview.toImport.map(course => ({ ...course, id: createId() }));
-  const courses = [...existingCourses, ...imported];
+  const courses = [...normalizedExistingCourses, ...imported];
   return {
     courses,
     imported,

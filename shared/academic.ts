@@ -1,5 +1,5 @@
 export type GradePointSystem = "4.0" | "4.3";
-export type CourseCategory = "required" | "elective" | "general";
+export type CourseCategory = "required" | "elective" | "general" | "common";
 export type LetterGrade =
   | "A+"
   | "A"
@@ -156,7 +156,7 @@ export type NkustTimetableImportPreview = {
   headers: string[];
 };
 
-const planCategoryLabels: Record<CourseCategory, string> = { required: "必修", elective: "選修", general: "通識" };
+const planCategoryLabels: Record<CourseCategory, string> = { required: "必修", elective: "選修", general: "通識", common: "校內共同必修" };
 const planPriorityLabels: Record<CoursePlanExportEntry["priority"], string> = { must: "一定要修", important: "很想安排", explore: "還在考慮" };
 
 export function getExportablePlanCourses(courses: CoursePlanExportEntry[]) {
@@ -343,6 +343,7 @@ function normalizeNkustTerm(value: string) {
 
 function nkustCategory(value: string | undefined): CourseCategory {
   const normalized = normalize(value ?? "");
+  if (/(共同必修|校內共同|common)/.test(normalized)) return "common";
   if (/(必修|required|compulsory|必選)/.test(normalized)) return "required";
   if (/(通識|general|liberal|共同)/.test(normalized)) return "general";
   return "elective";
@@ -482,8 +483,22 @@ function transcriptRecognition(value: string): CreditRecognition | undefined {
   if (["僅計gpa", "gpaonly"].includes(normalized)) return "gpa-only";
   return undefined;
 }
+export function isCceeCommonRequiredCourseName(name: string) {
+  return /^中文閱讀與表達\([一二]\)$/.test(name.trim()) || /^實用英文\([一二三四]\)$/.test(name.trim());
+}
+
+export function normalizeCceeCommonRequiredCategory<T extends { name: string; category: CourseCategory }>(course: T): T {
+  return course.category === "general" && isCceeCommonRequiredCourseName(course.name) ? { ...course, category: "common" } : course;
+}
+
+export function migrateCceeCommonRequiredCourses(courses: CourseRecord[]) {
+  return courses.map(normalizeCceeCommonRequiredCategory);
+}
+
 function transcriptCategory(value: string | undefined, name: string): CourseCategory {
   const normalized = normalize(value ?? "");
+  if (isCceeCommonRequiredCourseName(name)) return "common";
+  if (["校內共同必修", "共同必修", "common", "institutionalrequired"].includes(normalized)) return "common";
   if (["必修", "required", "compulsory"].includes(normalized)) return "required";
   if (["通識", "general", "liberal"].includes(normalized)) return "general";
   if (["選修", "elective"].includes(normalized)) return "elective";
@@ -641,7 +656,7 @@ export function getGradePoint(grade: LetterGrade, system: GradePointSystem) {
 }
 
 function isCourseCategory(value: unknown): value is CourseCategory {
-  return value === "required" || value === "elective" || value === "general";
+  return value === "required" || value === "elective" || value === "general" || value === "common";
 }
 
 function isLetterGrade(value: unknown): value is LetterGrade {
@@ -691,7 +706,7 @@ export function calculateCredits(courses: CourseRecord[]) {
       totals[course.category] += course.credits;
       return totals;
     },
-    { total: 0, required: 0, elective: 0, general: 0 },
+    { total: 0, required: 0, elective: 0, general: 0, common: 0 },
   );
 }
 
@@ -700,11 +715,11 @@ export function calculateCredits(courses: CourseRecord[]) {
  * 「博雅」與「數位通識」會一併列入 14 學分的博雅通識；括號內文字用於檢查至少三個課群。
  */
 export function getCcee114CommonEducationProgress(courses: CourseRecord[]): Ccee114CommonEducationProgress[] {
-  const eligible = courses.filter(course => countsTowardGraduation(course) && course.category === "general");
+  const eligible = courses.filter(countsTowardGraduation);
   const chinese = eligible.filter(course => /^中文閱讀與表達\([一二]\)$/.test(course.name));
   const english = eligible.filter(course => /^實用英文\([一二三四]\)$/.test(course.name));
-  const school = eligible.filter(course => /^校訂\(/.test(course.name));
-  const liberal = eligible.filter(course => /^(博雅|數位通識)\(/.test(course.name));
+  const school = eligible.filter(course => course.category === "general" && /^校訂\(/.test(course.name));
+  const liberal = eligible.filter(course => course.category === "general" && /^(博雅|數位通識)\(/.test(course.name));
   const sumCredits = (items: CourseRecord[]) => items.reduce((total, course) => total + course.credits, 0);
   const liberalGroups = Array.from(new Set(liberal.map(course => course.name.match(/^[^(]+\(([^)]+)\)/)?.[1]).filter((value): value is string => Boolean(value))));
   const rows = [
@@ -725,16 +740,16 @@ export function calculatePlannedCredits(courses: Array<Pick<CourseRecord, "credi
       totals[course.category] += course.credits;
       return totals;
     },
-    { total: 0, required: 0, elective: 0, general: 0 },
+    { total: 0, required: 0, elective: 0, general: 0, common: 0 },
   );
 }
 
 export function getCreditPlanStatus(completed: ReturnType<typeof calculateCredits>, planned: ReturnType<typeof calculatePlannedCredits>, goals: GraduationGoals) {
-  const categories: Array<"total" | CourseCategory> = ["total", "required", "elective", "general"];
+  const categories: Array<"total" | "required" | "elective" | "general"> = ["total", "required", "elective", "general"];
   return categories.map(category => {
     const target = goals[category === "total" ? "total" : category];
-    const completedCredits = completed[category];
-    const plannedCredits = planned[category];
+    const completedCredits = category === "general" ? completed.general + completed.common : completed[category];
+    const plannedCredits = category === "general" ? planned.general + planned.common : planned[category];
     return {
       category,
       target,
