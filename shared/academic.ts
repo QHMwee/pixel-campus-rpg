@@ -1,5 +1,5 @@
 export type GradePointSystem = "4.0" | "4.3";
-export type CourseCategory = "required" | "elective" | "general" | "common";
+export type CourseCategory = "required" | "elective" | "general" | "common" | "undeclared-required";
 export type LetterGrade =
   | "A+"
   | "A"
@@ -156,7 +156,7 @@ export type NkustTimetableImportPreview = {
   headers: string[];
 };
 
-const planCategoryLabels: Record<CourseCategory, string> = { required: "必修", elective: "選修", general: "通識", common: "校內共同必修" };
+const planCategoryLabels: Record<CourseCategory, string> = { required: "必修", elective: "選修", general: "通識", common: "校內共同必修", "undeclared-required": "不分系必修" };
 const planPriorityLabels: Record<CoursePlanExportEntry["priority"], string> = { must: "一定要修", important: "很想安排", explore: "還在考慮" };
 
 export function getExportablePlanCourses(courses: CoursePlanExportEntry[]) {
@@ -343,6 +343,7 @@ function normalizeNkustTerm(value: string) {
 
 function nkustCategory(value: string | undefined): CourseCategory {
   const normalized = normalize(value ?? "");
+  if (/(不分系必修|undeclaredrequired)/.test(normalized)) return "undeclared-required";
   if (/(共同必修|校內共同|common)/.test(normalized)) return "common";
   if (/(必修|required|compulsory|必選)/.test(normalized)) return "required";
   if (/(通識|general|liberal|共同)/.test(normalized)) return "general";
@@ -495,8 +496,17 @@ export function migrateCceeCommonRequiredCourses(courses: CourseRecord[]) {
   return courses.map(normalizeCceeCommonRequiredCategory);
 }
 
+export function normalizeUndeclaredRequiredCategory<T extends { category: CourseCategory; recognition?: CreditRecognition }>(course: T): T {
+  return course.recognition === "gpa-only" ? { ...course, category: "undeclared-required", recognition: "standard" } : course;
+}
+
+export function migrateUndeclaredRequiredCourses(courses: CourseRecord[]) {
+  return courses.map(normalizeUndeclaredRequiredCategory);
+}
+
 function transcriptCategory(value: string | undefined, name: string): CourseCategory {
   const normalized = normalize(value ?? "");
+  if (["不分系必修", "undeclaredrequired"].includes(normalized)) return "undeclared-required";
   if (isCceeCommonRequiredCourseName(name)) return "common";
   if (["校內共同必修", "共同必修", "common", "institutionalrequired"].includes(normalized)) return "common";
   if (["必修", "required", "compulsory"].includes(normalized)) return "required";
@@ -550,7 +560,9 @@ export function parseTranscript(text: string, mapping?: TranscriptFieldMap) {
       issues.push({ row: index + 1, raw: lines[index], message: "需要有效的課程名稱、1–12 學分與等第（A+～F 或 0–100 分）。" });
       continue;
     }
-    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: transcriptCategory(categoryIndex === undefined ? undefined : row[categoryIndex], name), ...(recognition ? { recognition } : {}) });
+    const category = transcriptCategory(categoryIndex === undefined ? undefined : row[categoryIndex], name);
+    const isUndeclaredRequired = category === "undeclared-required" || recognition === "gpa-only";
+    accepted.push({ term: term.trim() || "未指定", name: name.trim(), credits, grade, category: isUndeclaredRequired ? "undeclared-required" : category, ...(!isUndeclaredRequired && recognition ? { recognition } : {}) });
   }
   return { accepted, issues, headers, sample, needsMapping: false, mapping: columns };
 }
@@ -578,7 +590,7 @@ export function prepareTranscriptDraftImport(draft: Omit<CourseRecord, "id">[], 
       issues.push({ row: index + 1, raw: [course.term, course.name, course.credits, course.grade, course.category].join(","), message: "需要有效的課程名稱、1–12 學分、等第（A+～F）與課程類別。" });
       return;
     }
-    accepted.push({ ...course, term: course.term.trim() || "未指定", name: course.name.trim() });
+    accepted.push(normalizeUndeclaredRequiredCategory({ ...course, term: course.term.trim() || "未指定", name: course.name.trim() }));
   });
   const known = new Set(existingCourses.map(courseKey));
   const seen = new Set<string>();
@@ -656,7 +668,7 @@ export function getGradePoint(grade: LetterGrade, system: GradePointSystem) {
 }
 
 function isCourseCategory(value: unknown): value is CourseCategory {
-  return value === "required" || value === "elective" || value === "general" || value === "common";
+  return value === "required" || value === "elective" || value === "general" || value === "common" || value === "undeclared-required";
 }
 
 function isLetterGrade(value: unknown): value is LetterGrade {
@@ -677,7 +689,7 @@ function isPassingCourse(course: Pick<CourseRecord, "name" | "credits" | "grade"
 }
 
 function countsTowardGraduation(course: CourseRecord): boolean {
-  return isPassingCourse(course) && course.recognition !== "gpa-only" && course.recognition !== "pending";
+  return isPassingCourse(course) && course.category !== "undeclared-required" && course.recognition !== "gpa-only" && course.recognition !== "pending";
 }
 
 export function calculateGpa(courses: CourseRecord[], system: GradePointSystem) {
@@ -706,7 +718,7 @@ export function calculateCredits(courses: CourseRecord[]) {
       totals[course.category] += course.credits;
       return totals;
     },
-    { total: 0, required: 0, elective: 0, general: 0, common: 0 },
+    { total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 },
   );
 }
 
@@ -735,12 +747,12 @@ export function getCcee114CommonEducationProgress(courses: CourseRecord[]): Ccee
 export function calculatePlannedCredits(courses: Array<Pick<CourseRecord, "credits" | "category">>) {
   return courses.reduce(
     (totals, course) => {
-      if (!Number.isFinite(course.credits) || course.credits <= 0 || course.credits > 12) return totals;
+      if (!Number.isFinite(course.credits) || course.credits <= 0 || course.credits > 12 || course.category === "undeclared-required") return totals;
       totals.total += course.credits;
       totals[course.category] += course.credits;
       return totals;
     },
-    { total: 0, required: 0, elective: 0, general: 0, common: 0 },
+    { total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 },
   );
 }
 

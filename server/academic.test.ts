@@ -22,6 +22,7 @@ import {
   getTermGpas,
   getXp,
   migrateCceeCommonRequiredCourses,
+  migrateUndeclaredRequiredCourses,
   prepareTranscriptDraftImport,
   prepareTranscriptImport,
   prepareNkustTimetableDraftImport,
@@ -51,7 +52,7 @@ describe("academic calculations", () => {
   });
 
   it("會按課程類別累積已修學分", () => {
-    expect(calculateCredits(courses)).toEqual({ total: 8, required: 3, elective: 3, general: 2, common: 0 });
+    expect(calculateCredits(courses)).toEqual({ total: 8, required: 3, elective: 3, general: 2, common: 0, "undeclared-required": 0 });
   });
 
   it("在條件達成時解鎖專題與學術成就，並產生可執行建議", () => {
@@ -129,7 +130,7 @@ describe("academic calculations", () => {
       { term: "114-1", name: "資料科學", credits: 3, grade: "A+", category: "elective", recognition: "pending" },
     ]);
     const imported = preview.toImport.map((course, index) => ({ ...course, id: `recognized-${index}` }));
-    expect(calculateCredits(imported)).toEqual({ total: 3, required: 3, elective: 0, general: 0, common: 0 });
+    expect(calculateCredits(imported)).toEqual({ total: 3, required: 3, elective: 0, general: 0, common: 0, "undeclared-required": 0 });
   });
 
   it("會依及格門檻與成績權重判定能力熟練度，並以匯入課程推進角色等級", () => {
@@ -172,7 +173,7 @@ describe("academic calculations", () => {
       { id: "fail", term: "115-1", name: "資料庫系統", credits: 3, grade: "F", category: "elective" },
     ];
     expect(calculateGpa(mixedCourses, "4.0")).toBe(2);
-    expect(calculateCredits(mixedCourses)).toEqual({ total: 3, required: 3, elective: 0, general: 0, common: 0 });
+    expect(calculateCredits(mixedCourses)).toEqual({ total: 3, required: 3, elective: 0, general: 0, common: 0, "undeclared-required": 0 });
     expect(getXp(mixedCourses, [])).toBe(getXp([mixedCourses[0]!], []));
     expect(getGradePoint("A+", "4.3")).toBe(4.3);
   });
@@ -183,15 +184,26 @@ describe("academic calculations", () => {
       { id: "gpa-only", term: "114-1", name: "未認列外系課", credits: 3, grade: "B", category: "elective", recognition: "gpa-only" },
     ];
     expect(calculateGpa(transferred, "4.3")).toBe(3.5);
-    expect(calculateCredits(transferred)).toEqual({ total: 3, required: 0, elective: 3, general: 0, common: 0 });
+    expect(calculateCredits(transferred)).toEqual({ total: 3, required: 0, elective: 3, general: 0, common: 0, "undeclared-required": 0 });
   });
 
-  it("可將不分系課程選項解析為僅計 GPA，且完全不增加電通系畢業學分", () => {
+  it("會將舊有僅計 GPA CSV 輸入統一轉為不分系必修，且完全不增加電通系畢業學分", () => {
     const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別,畢業認列\n114-1,不分系探索課,3,88,選修,不分系課程（僅計 GPA）", []);
-    expect(preview.toImport).toEqual([{ term: "114-1", name: "不分系探索課", credits: 3, grade: "A", category: "elective", recognition: "gpa-only" }]);
+    expect(preview.toImport).toEqual([{ term: "114-1", name: "不分系探索課", credits: 3, grade: "A", category: "undeclared-required" }]);
     const imported = preview.toImport.map((course, index) => ({ ...course, id: `undeclared-${index}` }));
     expect(calculateGpa(imported, "4.3")).toBe(4);
-    expect(calculateCredits(imported)).toEqual({ total: 0, required: 0, elective: 0, general: 0, common: 0 });
+    expect(calculateCredits(imported)).toEqual({ total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 });
+  });
+
+  it("會將既有僅計 GPA 課程遷移為不分系必修，且該類別本身固定排除畢業學分", () => {
+    const migrated = migrateUndeclaredRequiredCourses([
+      { id: "legacy-gpa", term: "114-1", name: "既有不分系課", credits: 3, grade: "A", category: "elective", recognition: "gpa-only" },
+    ]);
+    expect(migrated[0]).toMatchObject({ category: "undeclared-required", recognition: "standard" });
+    const directUndeclared: CourseRecord[] = [{ id: "direct", term: "114-2", name: "不分系必修", credits: 3, grade: "A", category: "undeclared-required", recognition: "standard" }];
+    expect(calculateGpa(directUndeclared, "4.3")).toBe(4);
+    expect(calculateCredits(directUndeclared)).toEqual({ total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 });
+    expect(prepareTranscriptImport("學期,課程名稱,學分,成績,類別\n114-2,不分系必修課,3,90,不分系必修", []).toImport[0]?.category).toBe("undeclared-required");
   });
 
   it("轉系課程即使認列狀態不同仍按同學期與課名略過重複，待確認認列只先計入 GPA", () => {
@@ -201,14 +213,14 @@ describe("academic calculations", () => {
     const draft = [{ term: "114-1", name: "資料科學", credits: 3, grade: "A+" as const, category: "elective" as const, recognition: "gpa-only" as const }];
     const preview = prepareTranscriptDraftImport(draft, existing);
     expect(preview.toImport).toHaveLength(0);
-    expect(preview.duplicates).toEqual(draft);
+    expect(preview.duplicates).toEqual([{ ...draft[0], category: "undeclared-required", recognition: "standard" }]);
     const merged = [...existing, ...preview.toImport.map((course, index) => ({ ...course, id: `duplicate-${index}` }))];
     expect(calculateGpa(merged, "4.3")).toBe(4.3);
-    expect(calculateCredits(merged)).toEqual({ total: 3, required: 0, elective: 3, general: 0, common: 0 });
+    expect(calculateCredits(merged)).toEqual({ total: 3, required: 0, elective: 3, general: 0, common: 0, "undeclared-required": 0 });
 
     const pending: CourseRecord[] = [{ id: "pending-transfer", term: "114-1", name: "待確認外系課", credits: 3, grade: "A", category: "elective", recognition: "pending" }];
     expect(calculateGpa(pending, "4.3")).toBe(4);
-    expect(calculateCredits(pending)).toEqual({ total: 0, required: 0, elective: 0, general: 0, common: 0 });
+    expect(calculateCredits(pending)).toEqual({ total: 0, required: 0, elective: 0, general: 0, common: 0, "undeclared-required": 0 });
   });
 
   it("依電通系 114 結構分別追蹤中文、英文、博雅課群與校訂通識，且僅計入已認列畢業學分", () => {
@@ -241,7 +253,7 @@ describe("academic calculations", () => {
     ];
     const migrated = migrateCceeCommonRequiredCourses(legacyCourses);
     expect(migrated.map(course => course.category)).toEqual(["common", "common", "required"]);
-    expect(calculateCredits(migrated)).toEqual({ total: 7, required: 3, elective: 0, general: 0, common: 4 });
+    expect(calculateCredits(migrated)).toEqual({ total: 7, required: 3, elective: 0, general: 0, common: 4, "undeclared-required": 0 });
     expect(prepareTranscriptImport("學期,課程名稱,學分,成績,類別\n114-2,實用英文(二),2,90,通識", []).toImport[0]?.category).toBe("common");
   });
 
@@ -298,7 +310,7 @@ describe("academic calculations", () => {
       { credits: 2, category: "general" },
       { credits: 0, category: "elective" },
     ]);
-    expect(planned).toEqual({ total: 5, required: 3, elective: 0, general: 2, common: 0 });
+    expect(planned).toEqual({ total: 5, required: 3, elective: 0, general: 2, common: 0, "undeclared-required": 0 });
     const status = getCreditPlanStatus(completed, planned, { total: 10, required: 6, elective: 2, general: 2, semestersLeft: 4 });
     expect(status.find(row => row.category === "total")).toMatchObject({ completedCredits: 3, plannedCredits: 5, remainingAfterPlan: 2 });
     expect(status.find(row => row.category === "required")).toMatchObject({ completedCredits: 3, plannedCredits: 3, remainingAfterPlan: 0 });

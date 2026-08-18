@@ -56,6 +56,7 @@ import {
   getTermGpas,
   getXp,
   migrateCceeCommonRequiredCourses,
+  migrateUndeclaredRequiredCourses,
   gradeOptions,
   buildNkustTimetableTemplate,
   prepareNkustTimetableDraftImport,
@@ -135,11 +136,11 @@ const emptyQuestData: QuestData = {
   hasCompletedPlanIntro: false,
 };
 
-const categoryLabel: Record<CourseCategory, string> = { required: "電通系必修", elective: "專業選修", common: "校內共同必修", general: "通識" };
-const recognitionLabel: Record<CreditRecognition, string> = { standard: "一般／系內", "approved-external": "外系已認列", pending: "待確認認列", "gpa-only": "不分系課程（僅計 GPA）" };
+const categoryLabel: Record<CourseCategory, string> = { required: "電通系必修", elective: "專業選修", common: "校內共同必修", general: "通識", "undeclared-required": "不分系必修" };
+const recognitionLabel = { standard: "一般／系內", "approved-external": "外系已認列", pending: "待確認認列" } as Record<CreditRecognition, string>;
 const recognitionTone: Record<CreditRecognition, string> = { standard: "border-[#58709d] bg-[#1e3458] text-[#d3e2ff]", "approved-external": "border-[#74e2b1] bg-[#1d4b44] text-[#c7f7dc]", pending: "border-[#f4c659] bg-[#4c4024] text-[#ffe797]", "gpa-only": "border-[#aa97ff] bg-[#40376f] text-[#ded6ff]" };
 const statusLabel: Record<ProjectStatus, string> = { planning: "籌備中", active: "進行中", done: "已完成" };
-const categoryTone: Record<CourseCategory, string> = { required: "bg-[#f4c659] text-[#18203b]", elective: "bg-[#8ec6ff] text-[#13223d]", common: "bg-[#d6a8ff] text-[#241a3b]", general: "bg-[#a9e6ba] text-[#132b29]" };
+const categoryTone: Record<CourseCategory, string> = { required: "bg-[#f4c659] text-[#18203b]", elective: "bg-[#8ec6ff] text-[#13223d]", common: "bg-[#d6a8ff] text-[#241a3b]", general: "bg-[#a9e6ba] text-[#132b29]", "undeclared-required": "bg-[#cf9bc9] text-[#2f1830]" };
 const statusTone: Record<ProjectStatus, string> = { planning: "bg-[#687b9e]", active: "bg-[#6c55d9]", done: "bg-[#3b9a74]" };
 
 const navItems: { id: View; label: string; icon: typeof Compass }[] = [
@@ -164,7 +165,7 @@ function loadData(): QuestData {
     const restoredGoals = { ...initialGoals, ...(parsed.goals ?? {}) };
     const usesLegacyGenericGoals = restoredGoals.total === 128 && restoredGoals.required === 60 && restoredGoals.elective === 42 && restoredGoals.general === 26;
     return {
-      courses: migrateCceeCommonRequiredCourses(Array.isArray(parsed.courses) ? parsed.courses.filter(course => !legacyDemoCourseIds.has(course.id)) : []),
+      courses: migrateUndeclaredRequiredCourses(migrateCceeCommonRequiredCourses(Array.isArray(parsed.courses) ? parsed.courses.filter(course => !legacyDemoCourseIds.has(course.id)) : [])),
       projects: Array.isArray(parsed.projects) ? parsed.projects.filter(project => !legacyDemoProjectIds.has(project.id)) : [],
       goals: usesLegacyGenericGoals ? { ...ccee114GraduationGoals, semestersLeft: restoredGoals.semestersLeft } : restoredGoals,
       system: "4.3",
@@ -174,7 +175,7 @@ function loadData(): QuestData {
         category: parsed.preferences?.category === "required" || parsed.preferences?.category === "elective" || parsed.preferences?.category === "general" ? parsed.preferences.category : defaultRecommendationPreferences.category,
         projectStyle: parsed.preferences?.projectStyle === "team" || parsed.preferences?.projectStyle === "research" ? parsed.preferences.projectStyle : defaultRecommendationPreferences.projectStyle,
       },
-      plannedCourses: Array.isArray(parsed.plannedCourses) ? parsed.plannedCourses.filter((course): course is PlannedCourse => Boolean(course && typeof course.name === "string" && typeof course.term === "string" && Number.isFinite(course.credits) && (course.category === "required" || course.category === "elective" || course.category === "general" || course.category === "common") && (course.priority === "must" || course.priority === "important" || course.priority === "explore"))) : [],
+      plannedCourses: Array.isArray(parsed.plannedCourses) ? parsed.plannedCourses.filter((course): course is PlannedCourse => Boolean(course && typeof course.name === "string" && typeof course.term === "string" && Number.isFinite(course.credits) && (course.category === "required" || course.category === "elective" || course.category === "general" || course.category === "common" || course.category === "undeclared-required") && (course.priority === "must" || course.priority === "important" || course.priority === "explore"))) : [],
       hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
     };
   } catch {
@@ -281,8 +282,9 @@ export default function Home() {
   const [nkustImportMode, setNkustImportMode] = useState<"timetable" | "ccee114">("timetable");
   const [importReport, setImportReport] = useState<{ courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null>(null);
   const [fragmentImportError, setFragmentImportError] = useState<string | null>(null);
+  const [fragmentHash, setFragmentHash] = useState(() => window.location.hash);
   const mounted = useRef(false);
-  const fragmentImportHandled = useRef(false);
+  const fragmentImportInFlight = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
   const pdfConverter = trpc.transcriptPdf.convert.useMutation({
     onSuccess: (result: { csv: string; summary: string; source: "ai" | "local" }) => {
@@ -338,19 +340,26 @@ export default function Home() {
   }, [activeView]);
 
   useEffect(() => {
-    if (fragmentImportHandled.current) return;
-    fragmentImportHandled.current = true;
+    const handleHashChange = () => setFragmentHash(window.location.hash);
+    window.addEventListener("hashchange", handleHashChange);
+    return () => window.removeEventListener("hashchange", handleHashChange);
+  }, []);
+
+  useEffect(() => {
+    if (!fragmentHash.startsWith("#cq-import") || fragmentImportInFlight.current) return;
+    fragmentImportInFlight.current = true;
     void (async () => {
-      const fragment = window.location.hash.slice(1);
-      if (!fragment.startsWith("cq-import")) return;
+      const fragment = fragmentHash.slice(1);
       const fragmentCourses = await decodeFragmentTranscriptImport(fragment);
       if (!fragmentCourses) {
-        const usesCompressedImport = window.location.hash.startsWith("#cq-import-gz=");
+        const usesCompressedImport = fragmentHash.startsWith("#cq-import-gz=");
         setFragmentImportError(usesCompressedImport && typeof DecompressionStream === "undefined"
           ? "此瀏覽器不支援壓縮匯入連結。請改用最新版 Chrome、Safari 或 Edge 後重新開啟連結。"
           : "這個一次性匯入連結無法解讀或已不完整，因此沒有寫入任何成績資料。請重新取得完整連結後再試。");
         setActiveView("grades");
+        setFragmentHash("#grades");
         window.history.replaceState(null, "", "/#grades");
+        fragmentImportInFlight.current = false;
         return;
       }
       const merged = mergeFragmentTranscriptImport(data.courses, fragmentCourses, data.goals, () => crypto.randomUUID());
@@ -369,9 +378,11 @@ export default function Home() {
         hasCompletedPlanIntro: true,
       }));
       setActiveView("grades");
+      setFragmentHash("#grades");
       window.history.replaceState(null, "", "/#grades");
+      fragmentImportInFlight.current = false;
     })();
-  }, []);
+  }, [fragmentHash]);
 
   useEffect(() => {
     const current = unlockedAchievements.map(achievement => achievement.id);
@@ -693,7 +704,7 @@ export default function Home() {
             {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} skills={academicSkills} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={setActiveView} />}
             {activeView === "plan" && <Panel gold className="mt-4 overflow-hidden"><PanelTitle eyebrow="CCEE 114 CURRICULUM" title="電通系 114 課程結構" action={<GraduationCap className="text-[#f4c659]" />} /><div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto]"><div><p className="text-sm leading-7 text-[#d5e0f2]">依高科大電腦與通訊工程系四技 114 學年度入學課程結構，畢業目標為總計 128 學分：系必修 51、系專業選修 49、校共同與通識 28。模板只帶入官方明列的 21 門系必修，不會捏造你尚未選定的 49 學分選修。</p><p className="mt-3 border-l-4 border-[#f4c659] pl-3 text-xs leading-5 text-[#ffe9a4]">載入後仍會先顯示逐列草稿；你確認匯入時才更新這台裝置的學分目標與規劃。既有同學期、同課名課程會略過，不會被覆寫。</p></div><PixelButton onClick={openCcee114RequiredPlan} className="bg-[#f4c659] text-[#152544]"><GraduationCap size={16} /> 載入電通 114 必修</PixelButton></div></Panel>}
             {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} fragmentImportError={fragmentImportError} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
-            {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMap courses={data.courses} /></>}
+            {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /></>}
             {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
@@ -776,12 +787,12 @@ function GradesView({ courses, system, gpa, termGpas, courseForm, editingCourseI
       <div className="p-4 sm:p-5">{fragmentImportError && <div className="mb-5 border-2 border-[#e8817a] bg-[#4a2d35] p-4 text-sm font-bold leading-6 text-[#ffd7d2]">{fragmentImportError}</div>}{importReport && <div className="mb-5 border-2 border-[#f4c659] bg-[#4d4024] p-4 shadow-[3px_3px_0_#080d1f]"><p className="pixel-font text-[8px] leading-5 text-[#ffe797]">TRANSCRIPT LOOT ACQUIRED</p><p className="mt-2 font-black text-[#fff8df]">已匯入 {importReport.courseCount} 門課程，獲得 +{importReport.xpGain} XP{importReport.leveledUp ? "，角色已升級！" : "。"}</p><p className="mt-2 text-xs leading-5 text-[#e2d3a4]">新解鎖能力：{importReport.skillNames.length ? importReport.skillNames.join("、") : "已存在的能力標籤已強化"}</p></div>}<div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><SmallMetric label="累計 GPA" value={gpa.toFixed(2)} /><SmallMetric label="計算制度" value={system} /><SmallMetric label="課程總數" value={`${courses.length}`} /><SmallMetric label="學期數" value={`${termGpas.length}`} /></div>
       {grouped.length === 0 ? <EmptyState icon={<ScrollText />} title="卷軸仍是空白" detail="新增第一門課程，開始記錄你的學術冒險。" action={() => onOpen()} /> : <div className="space-y-5">{grouped.map(term => { const entries = courses.filter(course => course.term === term); const termGpa = termGpas.find(item => item.term === term)?.gpa ?? 0; return <div key={term}><div className="mb-2 flex items-center justify-between border-b-2 border-[#4e638c] pb-2"><p className="pixel-font text-[9px] leading-5 text-[#f4c659]">{term} TERM</p><span className="text-xs font-black text-[#d9e5fb]">學期 GPA <b className="ml-1 text-base text-[#f4c659]">{termGpa.toFixed(2)}</b></span></div><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="text-xs text-[#9caed0]"><tr><th className="pb-2 pl-2">課程</th><th className="pb-2">類別</th><th className="pb-2 text-center">學分</th><th className="pb-2 text-center">等第</th><th className="pb-2 text-center">點數</th><th className="pb-2 text-right">操作</th></tr></thead><tbody>{entries.map(course => <tr key={course.id} className="border-t-2 border-[#334b73] hover:bg-[#213554]"><td className="py-3 pl-2 font-bold text-[#fff8df]">{course.name}</td><td><span className={`inline-flex px-2 py-1 text-xs font-black ${categoryTone[course.category]}`}>{categoryLabel[course.category]}</span></td><td className="text-center font-bold text-[#d8e4fc]">{course.credits}</td><td className="text-center"><span className="inline-flex min-w-9 justify-center border-2 border-[#f4c659] bg-[#4e4023] px-2 py-1 font-black text-[#ffe58e]">{course.grade}</span></td><td className="text-center font-bold text-[#bcd1f6]">{getGradePoint(course.grade, system).toFixed(1)}</td><td className="pr-2 text-right"><button onClick={() => onOpen(course)} className="mr-2 p-1.5 text-[#b9c8e6] hover:text-[#f4c659]" aria-label={`編輯 ${course.name}`}><Pencil size={16} /></button><button onClick={() => window.confirm(`確定刪除「${course.name}」嗎？`) && onDelete(course.id)} className="p-1.5 text-[#b9c8e6] hover:text-[#f28682]" aria-label={`刪除 ${course.name}`}><Trash2 size={16} /></button></td></tr>)}</tbody></table></div></div>; })}</div>}</div>
     </Panel>
-    <div className="space-y-4"><RecognitionStatusSummary courses={courses} /><CourseEditor form={courseForm} editing={Boolean(editingCourseId)} setForm={setCourseForm} onSave={onSave} onCancel={onCancel} /></div>
+    <div className="space-y-4"><RecognitionStatusSummaryV2 courses={courses} /><CourseEditor form={courseForm} editing={Boolean(editingCourseId)} setForm={setCourseForm} onSave={onSave} onCancel={onCancel} /></div>
   </div>;
 }
 
 function CourseEditor({ form, editing, setForm, onSave, onCancel }: { form: Omit<CourseRecord, "id"> | null; editing: boolean; setForm: React.Dispatch<React.SetStateAction<Omit<CourseRecord, "id"> | null>>; onSave: () => void; onCancel: () => void }) {
-  return <Panel className="h-fit overflow-hidden 2xl:sticky 2xl:top-5"><PanelTitle eyebrow="COURSE EDITOR" title={form ? editing ? "編輯課程" : "新增課程" : "準備書寫"} action={<BookOpen className="text-[#f4c659]" />} /><div className="p-5">{!form ? <EmptyState icon={<Plus />} title="新增一則紀錄" detail="將每一次修課成果收入卷軸，GPA 與學分進度會自動更新。" /> : <div className="space-y-4"><Field label="課程名稱"><input value={form.name} onChange={event => setForm(current => current && { ...current, name: event.target.value })} placeholder="例如：演算法" className="pixel-input w-full px-3 py-2.5" /></Field><div className="grid grid-cols-2 gap-3"><Field label="學期"><input value={form.term} onChange={event => setForm(current => current && { ...current, term: event.target.value })} placeholder="114-2" className="pixel-input w-full px-3 py-2.5" /></Field><Field label="學分"><input type="number" min="1" max="12" value={form.credits} onChange={event => setForm(current => current && { ...current, credits: Number(event.target.value) })} className="pixel-input w-full px-3 py-2.5" /></Field></div><div className="grid grid-cols-2 gap-3"><Field label="成績等第"><select value={form.grade} onChange={event => setForm(current => current && { ...current, grade: event.target.value as LetterGrade })} className="pixel-input w-full px-3 py-2.5">{gradeOptions.map(grade => <option key={grade}>{grade}</option>)}</select></Field><Field label="課程類別"><select value={form.category} onChange={event => setForm(current => current && { ...current, category: event.target.value as CourseCategory })} className="pixel-input w-full px-3 py-2.5">{Object.entries(categoryLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field></div><Field label="畢業學分認列"><select value={form.recognition ?? "standard"} onChange={event => setForm(current => current && { ...current, recognition: event.target.value as CreditRecognition })} className="pixel-input w-full px-3 py-2.5">{Object.entries(recognitionLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><p className="mt-1.5 text-[11px] leading-5 text-[#91a5c8]">所有正式成績都計入 GPA；選擇「不分系課程（僅計 GPA）」時，課程不會增加電通系畢業總學分、系必修、專業選修或校共同／通識進度。</p></Field><div className="flex gap-3 pt-2"><PixelButton onClick={onSave} disabled={!form.name.trim() || !form.term.trim()} className="flex-1 bg-[#f4c659] text-[#162442]"><ShieldCheck size={16} /> 儲存紀錄</PixelButton><PixelButton onClick={onCancel} className="bg-[#33486c]"><X size={16} /></PixelButton></div></div>}</div></Panel>;
+  return <Panel className="h-fit overflow-hidden 2xl:sticky 2xl:top-5"><PanelTitle eyebrow="COURSE EDITOR" title={form ? editing ? "編輯課程" : "新增課程" : "準備書寫"} action={<BookOpen className="text-[#f4c659]" />} /><div className="p-5">{!form ? <EmptyState icon={<Plus />} title="新增一則紀錄" detail="將每一次修課成果收入卷軸，GPA 與學分進度會自動更新。" /> : <div className="space-y-4"><Field label="課程名稱"><input value={form.name} onChange={event => setForm(current => current && { ...current, name: event.target.value })} placeholder="例如：演算法" className="pixel-input w-full px-3 py-2.5" /></Field><div className="grid grid-cols-2 gap-3"><Field label="學期"><input value={form.term} onChange={event => setForm(current => current && { ...current, term: event.target.value })} placeholder="114-2" className="pixel-input w-full px-3 py-2.5" /></Field><Field label="學分"><input type="number" min="1" max="12" value={form.credits} onChange={event => setForm(current => current && { ...current, credits: Number(event.target.value) })} className="pixel-input w-full px-3 py-2.5" /></Field></div><div className="grid grid-cols-2 gap-3"><Field label="成績等第"><select value={form.grade} onChange={event => setForm(current => current && { ...current, grade: event.target.value as LetterGrade })} className="pixel-input w-full px-3 py-2.5">{gradeOptions.map(grade => <option key={grade}>{grade}</option>)}</select></Field><Field label="課程類別"><select value={form.category} onChange={event => setForm(current => current && { ...current, category: event.target.value as CourseCategory })} className="pixel-input w-full px-3 py-2.5">{Object.entries(categoryLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field></div><Field label="畢業學分認列"><select value={form.recognition ?? "standard"} onChange={event => setForm(current => current && { ...current, recognition: event.target.value as CreditRecognition })} className="pixel-input w-full px-3 py-2.5">{Object.entries(recognitionLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><p className="mt-1.5 text-[11px] leading-5 text-[#91a5c8]">所有正式成績都計入 GPA；請在「課程類別」選擇「不分系必修」以保留 GPA、固定排除電通系畢業總學分、系必修、專業選修與校共同／通識進度。</p></Field><div className="flex gap-3 pt-2"><PixelButton onClick={onSave} disabled={!form.name.trim() || !form.term.trim()} className="flex-1 bg-[#f4c659] text-[#162442]"><ShieldCheck size={16} /> 儲存紀錄</PixelButton><PixelButton onClick={onCancel} className="bg-[#33486c]"><X size={16} /></PixelButton></div></div>}</div></Panel>;
 }
 
 function TranscriptMappingWizard({ open, headers, sample, mapping, onChange, onApply, onClose }: { open: boolean; headers: string[]; sample: string[]; mapping: TranscriptFieldMap; onChange: (mapping: TranscriptFieldMap) => void; onApply: () => void; onClose: () => void }) {
@@ -806,6 +817,20 @@ function CreditRecognitionMap({ courses }: { courses: CourseRecord[] }) {
   return <Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="TRANSFER CREDIT MAP" title="轉系與外系學分狀態" action={<ScrollText className="text-[#74e2b1]" />} /><div className="p-5"><p className="text-sm leading-7 text-[#c8d7ec]">這裡列出會影響電通系畢業進度的外系課程狀態。所有列出的正式成績仍納入 GPA；待確認認列與僅計 GPA 的學分不會先加入畢業進度。</p>{groups.length ? <div className="mt-4 grid gap-3 md:grid-cols-3">{groups.map(group => { const credits = group.courses.reduce((total, course) => total + course.credits, 0); const countsTowardGraduation = group.recognition === "approved-external"; return <div key={group.recognition} className={`border-2 p-4 ${recognitionTone[group.recognition]}`}><p className="font-black">{recognitionLabel[group.recognition]}</p><p className="mt-2 text-xs leading-5">{group.courses.length} 門 · {credits} 學分</p><p className="mt-2 text-xs leading-5">{countsTowardGraduation ? "已納入電通系畢業學分" : "目前不納入電通系畢業學分"}</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{group.courses.map(course => `${course.term} ${course.name}`).join("、")}</p></div>; })}</div> : <p className="mt-4 border-2 border-dashed border-[#4d638d] p-3 text-xs leading-5 text-[#9dafcf]">尚未標記外系認列課程。可在成績卷軸或成績單匯入草稿逐列設定。</p>}</div></Panel>;
 }
 
+function RecognitionStatusSummaryV2({ courses }: { courses: CourseRecord[] }) {
+  const undeclared = courses.filter(course => course.category === "undeclared-required");
+  const groups = (Object.keys(recognitionLabel) as Array<Exclude<CreditRecognition, "gpa-only">>)
+    .map(recognition => ({ recognition, courses: courses.filter(course => course.category !== "undeclared-required" && (course.recognition ?? "standard") === recognition) }))
+    .filter(group => group.courses.length > 0);
+  return <Panel className="overflow-hidden"><PanelTitle eyebrow="TRANSFER & CREDIT STATUS" title="轉系課程認列" action={<ScrollText className="text-[#74e2b1]" />} /><div className="space-y-3 p-4"><p className="text-xs leading-5 text-[#b7c7e2]">所有正式成績都計入 GPA。只有非「不分系必修」且標為一般／系內或外系已認列的課程，才會加入電通系畢業學分；不分系必修固定只計 GPA。</p>{groups.map(group => <div key={group.recognition} className={`border-2 p-3 ${recognitionTone[group.recognition]}`}><p className="text-xs font-black">{recognitionLabel[group.recognition]} · {group.courses.length} 門</p><p className="mt-1 text-xs leading-5">{group.courses.map(course => `${course.term} ${course.name}`).join("、")}</p></div>)}{undeclared.length > 0 && <div className="border-2 border-[#cf9bc9] bg-[#402d47] p-3 text-[#ffe0fa]"><p className="text-xs font-black">不分系必修 · {undeclared.length} 門 · {undeclared.reduce((total, course) => total + course.credits, 0)} 學分</p><p className="mt-1 text-xs leading-5">僅計入 GPA，不增加電通系畢業學分：{undeclared.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}{!groups.length && !undeclared.length && <p className="border-2 border-dashed border-[#4d638d] p-3 text-xs leading-5 text-[#9dafcf]">尚未建立轉系、外系或不分系課程紀錄。匯入歷年成績後，可逐列設定類別與認列狀態。</p>}</div></Panel>;
+}
+
+function CreditRecognitionMapV2({ courses }: { courses: CourseRecord[] }) {
+  const external = courses.filter(course => course.category !== "undeclared-required" && course.recognition === "approved-external");
+  const undeclared = courses.filter(course => course.category === "undeclared-required");
+  return <Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="TRANSFER CREDIT MAP" title="轉系與外系學分狀態" action={<ScrollText className="text-[#74e2b1]" />} /><div className="p-5"><p className="text-sm leading-7 text-[#c8d7ec]">已認列的外系課會納入電通系畢業進度；不分系必修則只保留在 GPA 與成績卷軸，不會增加任何電通系畢業學分。</p>{external.length || undeclared.length ? <div className="mt-4 grid gap-3 md:grid-cols-2">{external.length > 0 && <div className="border-2 border-[#74e2b1] bg-[#1d4b44] p-4 text-[#c7f7dc]"><p className="font-black">外系已認列</p><p className="mt-2 text-xs leading-5">{external.length} 門 · {external.reduce((total, course) => total + course.credits, 0)} 學分</p><p className="mt-2 text-xs leading-5">已納入電通系畢業學分</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{external.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}{undeclared.length > 0 && <div className="border-2 border-[#cf9bc9] bg-[#402d47] p-4 text-[#ffe0fa]"><p className="font-black">不分系必修</p><p className="mt-2 text-xs leading-5">{undeclared.length} 門 · {undeclared.reduce((total, course) => total + course.credits, 0)} 學分</p><p className="mt-2 text-xs leading-5">僅計入 GPA，不納入電通系畢業學分</p><p className="mt-3 border-t border-current/30 pt-2 text-xs leading-5">{undeclared.map(course => `${course.term} ${course.name}`).join("、")}</p></div>}</div> : <p className="mt-4 border-2 border-dashed border-[#4d638d] p-3 text-xs leading-5 text-[#9dafcf]">尚未標記外系認列或不分系必修課程。</p>}</div></Panel>;
+}
+
 function CreditPlanningSummary({ status }: { status: ReturnType<typeof getCreditPlanStatus> }) {
   const labels: Record<(typeof status)[number]["category"], string> = { total: "畢業總學分", required: "電通系必修", elective: "專業選修", general: "校共同與通識" };
   return <Panel gold className="mb-4 overflow-hidden animate-pop-in"><PanelTitle eyebrow="PLAN VS. PROGRESS" title="規劃與實際進度" action={<BookOpen className="text-[#f4c659]" />} /><div className="p-5"><p className="max-w-3xl text-sm leading-7 text-[#c8d7ec]">這裡會把你已完成的學分與課程規劃表中的預計學分分開看。規劃能幫你估算缺口，但不會被當作已修學分，也不會影響 GPA。</p><div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{status.map(row => <div key={row.category} className="border-2 border-[#4d638d] bg-[#15233f] p-3"><p className="font-black text-[#fff8df]">{labels[row.category]}</p><p className="mt-2 text-xs text-[#9fb2d2]">已完成 <b className="text-[#74e2b1]">{row.completedCredits}</b> · 規劃中 <b className="text-[#f4c659]">{row.plannedCredits}</b></p><p className="mt-2 text-sm font-black text-[#dce8ff]">規劃後尚差 <span className="text-[#f4c659]">{row.remainingAfterPlan}</span> 學分</p></div>)}</div></div></Panel>;
@@ -820,7 +845,7 @@ function CceeCommonEducationMap({ courses }: { courses: CourseRecord[] }) {
   const rows = getCcee114CommonEducationProgress(courses);
   const completed = rows.reduce((total, row) => total + row.credits, 0);
   const target = rows.reduce((total, row) => total + row.target, 0);
-  return <Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="CCEE 114 COMMON EDUCATION" title="校共同與通識進度" action={<GraduationCap className="text-[#f4c659]" />} /><div className="p-5"><p className="max-w-3xl text-sm leading-7 text-[#c8d7ec]">電通系 114 校共同與通識合計 28 學分：中文 4、英文 8、博雅 14（至少三個不同課群）及校訂 2。只有已計入畢業學分的課程會出現在這裡；僅計 GPA 的不分系課程不會增加進度。</p><div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">{rows.map(row => { const percent = row.target ? (row.credits / row.target) * 100 : 0; return <div key={row.id} className="border-2 border-[#4c628c] bg-[#172640] p-4"><div className="flex items-start justify-between gap-3"><p className="font-black text-[#fff8df]">{row.label}</p><span className={`border px-2 py-1 text-[10px] font-black ${row.remaining === 0 ? "border-[#74e2b1] bg-[#1d4b44] text-[#c7f7dc]" : "border-[#f4c659] bg-[#4c4024] text-[#ffe797]"}`}>{row.remaining === 0 ? "已達標" : `尚差 ${row.remaining}`}</span></div><p className="mt-3 text-xl font-black text-[#f4c659]">{row.credits} <span className="text-sm text-[#b7c8e4]">/ {row.target} 學分</span></p><div className="mt-3"><ProgressBar value={percent} tone={row.remaining === 0 ? "mint" : "gold"} /></div><p className="mt-3 text-xs leading-5 text-[#aebfdd]">{row.detail}</p></div>; })}</div><div className="mt-4 border-l-4 border-[#f4c659] bg-[#3e3421] px-4 py-3 text-sm leading-6 text-[#ffe9a4]">目前已在此四項累積 <b>{completed}</b>／{target} 學分；「博雅通識」會顯示已涵蓋的課群，方便檢查至少三個不同課群的規定。</div></div></Panel>;
+  return <Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="CCEE 114 COMMON EDUCATION" title="校共同與通識進度" action={<GraduationCap className="text-[#f4c659]" />} /><div className="p-5"><p className="max-w-3xl text-sm leading-7 text-[#c8d7ec]">電通系 114 校共同與通識合計 28 學分：中文 4、英文 8、博雅 14（至少三個不同課群）及校訂 2。只有已計入畢業學分的課程會出現在這裡；「不分系必修」雖會計入 GPA，但不會增加進度。</p><div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">{rows.map(row => { const percent = row.target ? (row.credits / row.target) * 100 : 0; return <div key={row.id} className="border-2 border-[#4c628c] bg-[#172640] p-4"><div className="flex items-start justify-between gap-3"><p className="font-black text-[#fff8df]">{row.label}</p><span className={`border px-2 py-1 text-[10px] font-black ${row.remaining === 0 ? "border-[#74e2b1] bg-[#1d4b44] text-[#c7f7dc]" : "border-[#f4c659] bg-[#4c4024] text-[#ffe797]"}`}>{row.remaining === 0 ? "已達標" : `尚差 ${row.remaining}`}</span></div><p className="mt-3 text-xl font-black text-[#f4c659]">{row.credits} <span className="text-sm text-[#b7c8e4]">/ {row.target} 學分</span></p><div className="mt-3"><ProgressBar value={percent} tone={row.remaining === 0 ? "mint" : "gold"} /></div><p className="mt-3 text-xs leading-5 text-[#aebfdd]">{row.detail}</p></div>; })}</div><div className="mt-4 border-l-4 border-[#f4c659] bg-[#3e3421] px-4 py-3 text-sm leading-6 text-[#ffe9a4]">目前已在此四項累積 <b>{completed}</b>／{target} 學分；「博雅通識」會顯示已涵蓋的課群，方便檢查至少三個不同課群的規定。</div></div></Panel>;
 }
 function GoalInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) { return <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#c7d5ec]">{label}</span><input className="pixel-input w-full px-3 py-2.5" type="number" min="0" value={value} onChange={event => onChange(Number(event.target.value))} /></label>; }
 

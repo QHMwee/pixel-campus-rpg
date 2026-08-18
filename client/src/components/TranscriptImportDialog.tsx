@@ -8,13 +8,13 @@ const categoryLabel: Record<CourseCategory, string> = {
   elective: "專業選修",
   common: "校內共同必修",
   general: "通識",
+  "undeclared-required": "不分系必修",
 };
-const recognitionLabel: Record<CreditRecognition, string> = {
+const recognitionLabel = {
   standard: "一般／系內",
   "approved-external": "外系已認列",
   pending: "待確認認列",
-  "gpa-only": "不分系課程（僅計 GPA）",
-};
+} as Record<CreditRecognition, string>;
 
 type TranscriptImportDialogProps = {
   open: boolean;
@@ -69,7 +69,7 @@ export function TranscriptImportDialogV2(props: TranscriptImportDialogProps) {
               <p className="mt-2 text-xs leading-5 text-[#cfc7f5]">支援可選取文字的 PDF，最大 2 MB。轉換後仍須逐列確認，不保留原始檔。</p>
               <label className={`pixel-button pixel-corners mt-4 inline-flex cursor-pointer items-center gap-2 px-4 py-2 text-sm font-bold ${isPdfConverting ? "cursor-wait bg-[#4c427b] text-[#ded6ff]" : "bg-[#5a48b9] text-[#fff8df]"}`}><FileText size={16} /> {isPdfConverting ? "AI 轉換中…" : "選擇 PDF 成績單"}<input type="file" accept=".pdf,application/pdf" disabled={isPdfConverting} onChange={onPdfChange} className="sr-only" /></label>
             </div>
-            <div className="border-l-4 border-[#a998ff] pl-3 text-xs leading-5 text-[#d7ceff]"><p className="font-black">匯入安全規則</p><p className="mt-1">CSV 可選填「畢業認列」欄，自動帶入一般／系內、外系已認列、待確認認列或僅計 GPA；仍可在草稿逐列修改。GPA 以有效嘗試學分加權；畢業學分、能力與 XP 僅計入及格課程。相同學期＋課程名稱會標示為重複，不覆蓋既有紀錄。</p></div>
+            <div className="border-l-4 border-[#a998ff] pl-3 text-xs leading-5 text-[#d7ceff]"><p className="font-black">匯入安全規則</p><p className="mt-1">CSV 可選填「畢業認列」欄，自動帶入一般／系內、外系已認列或待確認認列；若課程類別為「不分系必修」，系統會固定保留 GPA、排除電通系畢業學分。仍可在草稿逐列修改。GPA 以有效嘗試學分加權；畢業學分、能力與 XP 僅計入及格課程。相同學期＋課程名稱會標示為重複，不覆蓋既有紀錄。</p></div>
           </div>
         </div>
 
@@ -78,7 +78,7 @@ export function TranscriptImportDialogV2(props: TranscriptImportDialogProps) {
         {preview && <div className="border-2 border-[#58709d] bg-[#13213b] p-4">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-black text-[#fff8df]">可校對的匯入草稿</p><p className="mt-1 text-xs text-[#aebfdb]">可新增 {preview.toImport.length} 筆 · 略過重複 {preview.duplicates.length} 筆 · 格式問題 {preview.issues.length} 列</p></div><span className={`border-2 px-2 py-1 text-xs font-black ${preview.issues.length ? "border-[#ee817c] bg-[#4c2b35] text-[#ffd1cf]" : "border-[#74e2b1] bg-[#1d4b44] text-[#c7f7dc]"}`}>{preview.issues.length ? "需先修正" : "草稿已驗證"}</span></div>
           {draft.length > 0 && <>
-            <p className="mt-4 border-l-4 border-[#f4c659] bg-[#3e3421] px-3 py-2 text-xs leading-5 text-[#ffe9a4]">直接修改欄位會立即重新檢查成績、學分與重複資料；不需要的列可按右側垃圾桶移除。轉系前正式成績一律納入 GPA；僅在確定不計入電通畢業學分時選擇「僅計 GPA」。</p>
+            <p className="mt-4 border-l-4 border-[#f4c659] bg-[#3e3421] px-3 py-2 text-xs leading-5 text-[#ffe9a4]">直接修改欄位會立即重新檢查成績、學分與重複資料；不需要的列可按右側垃圾桶移除。轉系前正式成績一律納入 GPA；確定不計入電通畢業學分的課程，請在「類別」選擇「不分系必修」。</p>
             <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[1020px] text-left text-xs"><thead className="text-[#aebfdb]"><tr><th className="pb-2">學期</th><th className="pb-2">課程</th><th className="pb-2 text-center">學分</th><th className="pb-2">等第</th><th className="pb-2">類別</th><th className="pb-2">畢業認列</th><th className="pb-2 text-right">操作</th></tr></thead><tbody>{draft.map((course, index) => <tr key={`draft-row-${index}`} className="border-t-2 border-[#334b73]"><td className="py-2 pr-2"><input aria-label={`第 ${index + 1} 列學期`} value={course.term} onChange={event => onDraftChange(index, { term: event.target.value })} className="pixel-input w-24 px-2 py-1.5 text-xs" /></td><td className="py-2 pr-2"><input aria-label={`第 ${index + 1} 列課程名稱`} value={course.name} onChange={event => onDraftChange(index, { name: event.target.value })} className="pixel-input w-48 px-2 py-1.5 text-xs" /></td><td className="py-2 pr-2"><input aria-label={`第 ${index + 1} 列學分`} type="number" min="1" max="12" step="0.5" value={course.credits} onChange={event => onDraftChange(index, { credits: Number(event.target.value) })} className="pixel-input w-20 px-2 py-1.5 text-center text-xs" /></td><td className="py-2 pr-2"><select aria-label={`第 ${index + 1} 列成績`} value={course.grade} onChange={event => onDraftChange(index, { grade: event.target.value as LetterGrade })} className="pixel-input w-20 px-2 py-1.5 text-xs">{gradeOptions.map(grade => <option key={grade} value={grade}>{grade}</option>)}</select></td><td className="py-2 pr-2"><select aria-label={`第 ${index + 1} 列課程類別`} value={course.category} onChange={event => onDraftChange(index, { category: event.target.value as CourseCategory })} className="pixel-input w-24 px-2 py-1.5 text-xs">{Object.entries(categoryLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 pr-2"><select aria-label={`第 ${index + 1} 列畢業認列`} value={course.recognition ?? "standard"} onChange={event => onDraftChange(index, { recognition: event.target.value as CreditRecognition })} className="pixel-input w-32 px-2 py-1.5 text-xs">{Object.entries(recognitionLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td className="py-2 text-right"><button type="button" onClick={() => onDraftDelete(index)} className="p-2 text-[#b9c8e6] hover:text-[#f28682]" aria-label={`刪除匯入草稿：${course.name || `第 ${index + 1} 列`}`}><Trash2 size={16} /></button></td></tr>)}</tbody></table></div>
           </>}
           {preview.duplicates.length > 0 && <p className="mt-3 text-xs leading-5 text-[#e7c984]">已略過重複：{preview.duplicates.map(course => `${course.term} ${course.name}`).join("、")}</p>}
