@@ -32,6 +32,15 @@ describe("fragment transcript import", () => {
     expect(result.unmatched).toEqual([{ term: "114-2", name: "未曾匯入的課", numericScore: 88 }]);
   });
 
+  it("可將既有抵修課移到目標學期並加入備註，保留原有成績、學分、類別與認列", () => {
+    const existing = [{ id: "design-life", term: "114-銜接", name: "博雅(社會)設計人生", credits: 2, grade: "A+" as const, numericScore: 93, category: "general" as const, recognition: "standard" as const }];
+    const updates = [{ term: "114-銜接", name: "博雅(社會)設計人生", targetTerm: "114-2", note: "抵修" }];
+    const result = mergeFragmentNumericScoreUpdate(existing, updates);
+    expect(result.courses).toEqual([{ ...existing[0], term: "114-2", note: "抵修" }]);
+    expect(result.updated).toEqual([{ ...existing[0], term: "114-2", note: "抵修" }]);
+    expect(result.unmatched).toEqual([]);
+  });
+
   it("首次與重複開啟一次性連結都會套用 51／49／28／128 目標，且不重複新增課程", () => {
     const incoming = [
       { term: "114-1", name: "系必修測試甲", credits: 8, grade: "A" as const, category: "required" as const, recognition: "standard" as const },

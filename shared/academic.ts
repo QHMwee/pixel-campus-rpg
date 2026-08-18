@@ -27,6 +27,8 @@ export type CourseRecord = {
   grade: LetterGrade;
   /** 原始百分制成績（0–100），僅用於學業總平均與學期數字平均；不會取代 GPA 等第。 */
   numericScore?: number;
+  /** 使用者自行標記的修課說明，例如抵修；不影響 GPA、成績或學分。 */
+  note?: string;
   category: CourseCategory;
   recognition?: CreditRecognition;
 };

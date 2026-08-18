@@ -15,7 +15,12 @@ export type FragmentImportMergeResult = {
 export type FragmentNumericScoreUpdate = {
   term: string;
   name: string;
-  numericScore: number;
+  /** 指定時才覆寫既有百分制成績。 */
+  numericScore?: number;
+  /** 指定時才將既有課程移到目標學期；學分、等第與類別一律保留。 */
+  targetTerm?: string;
+  /** 指定時才覆寫既有課程備註，例如「抵修」。 */
+  note?: string;
 };
 
 export type FragmentNumericScoreUpdatePayload = {
@@ -55,28 +60,40 @@ function scoreUpdateKey(value: Pick<FragmentNumericScoreUpdate, "term" | "name">
 function isNumericScoreUpdate(value: unknown): value is FragmentNumericScoreUpdate {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Partial<FragmentNumericScoreUpdate>;
+  const hasValidScore = candidate.numericScore === undefined || (typeof candidate.numericScore === "number"
+    && Number.isFinite(candidate.numericScore)
+    && candidate.numericScore >= 0
+    && candidate.numericScore <= 100);
+  const hasValidTargetTerm = candidate.targetTerm === undefined || (typeof candidate.targetTerm === "string" && candidate.targetTerm.trim().length > 0);
+  const hasValidNote = candidate.note === undefined || typeof candidate.note === "string";
+  const hasPatch = candidate.numericScore !== undefined || candidate.targetTerm !== undefined || candidate.note !== undefined;
   return typeof candidate.term === "string"
     && typeof candidate.name === "string"
     && candidate.term.trim().length > 0
     && candidate.name.trim().length > 0
-    && typeof candidate.numericScore === "number"
-    && Number.isFinite(candidate.numericScore)
-    && candidate.numericScore >= 0
-    && candidate.numericScore <= 100;
+    && hasValidScore
+    && hasValidTargetTerm
+    && hasValidNote
+    && hasPatch;
 }
 
-/** 僅更新既有課程的原始百分制成績；同一學期與課名未命中時不會建立新課程。 */
+/** 僅更新既有課程的百分制成績、學期或備註；同一學期與課名未命中時不會建立新課程。 */
 export function mergeFragmentNumericScoreUpdate(existingCourses: CourseRecord[], updates: FragmentNumericScoreUpdate[]): FragmentNumericScoreUpdateResult {
-  const updateByKey = new Map(updates.filter(isNumericScoreUpdate).map(update => [scoreUpdateKey(update), update.numericScore]));
+  const updateByKey = new Map(updates.filter(isNumericScoreUpdate).map(update => [scoreUpdateKey(update), update]));
   const matchedKeys = new Set<string>();
   const updated: CourseRecord[] = [];
   const courses = existingCourses.map(course => {
     const key = scoreUpdateKey(course);
-    const numericScore = updateByKey.get(key);
-    if (numericScore === undefined) return course;
+    const update = updateByKey.get(key);
+    if (!update) return course;
     matchedKeys.add(key);
-    if (course.numericScore === numericScore) return course;
-    const nextCourse = { ...course, numericScore };
+    const nextCourse: CourseRecord = {
+      ...course,
+      ...(update.numericScore === undefined ? {} : { numericScore: update.numericScore }),
+      ...(update.targetTerm === undefined ? {} : { term: update.targetTerm.trim() }),
+      ...(update.note === undefined ? {} : { note: update.note.trim() || undefined }),
+    };
+    if (nextCourse.numericScore === course.numericScore && nextCourse.term === course.term && nextCourse.note === course.note) return course;
     updated.push(nextCourse);
     return nextCourse;
   });
