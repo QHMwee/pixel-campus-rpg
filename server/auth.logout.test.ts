@@ -59,4 +59,14 @@ describe("auth.logout", () => {
       path: "/",
     });
   });
+
+  it("只允許擁有者角色通過私人網站存取檢查", async () => {
+    const { ctx } = createAuthContext();
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.auth.ownerAccess()).rejects.toMatchObject({ code: "FORBIDDEN" });
+
+    if (!ctx.user) throw new Error("測試使用者不存在");
+    ctx.user.role = "admin";
+    await expect(caller.auth.ownerAccess()).resolves.toEqual({ name: "Sample User", role: "admin" });
+  });
 });

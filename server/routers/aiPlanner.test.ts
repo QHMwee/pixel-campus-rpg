@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildLocalPlanningFallback } from "./aiPlanner";
+import type { TrpcContext } from "../_core/context";
+import { aiPlannerRouter, buildLocalPlanningFallback } from "./aiPlanner";
 
 const snapshot = {
   gpa: 3.4,
@@ -28,5 +29,10 @@ describe("AI planning fallback", () => {
     const projectsAdvice = buildLocalPlanningFallback("projects", snapshot);
     const badgesAdvice = buildLocalPlanningFallback("badges", snapshot);
     expect(projectsAdvice.actions[0]?.label).not.toBe(badgesAdvice.actions[0]?.label);
+  });
+
+  it("拒絕未登入訪客呼叫私人 AI 規劃端點", async () => {
+    const caller = aiPlannerRouter.createCaller({} as TrpcContext);
+    await expect(caller.generate({ section: "quest", snapshot })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

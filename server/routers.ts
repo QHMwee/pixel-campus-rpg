@@ -1,7 +1,7 @@
 import { COOKIE_NAME } from "@shared/const";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
+import { adminProcedure, publicProcedure, router } from "./_core/trpc";
 import { aiPlannerRouter } from "./routers/aiPlanner";
 import { transcriptPdfRouter } from "./routers/transcriptPdf";
 
@@ -12,6 +12,10 @@ export const appRouter = router({
   transcriptPdf: transcriptPdfRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    ownerAccess: adminProcedure.query(({ ctx }) => ({
+      name: ctx.user.name ?? "本人",
+      role: ctx.user.role,
+    })),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });

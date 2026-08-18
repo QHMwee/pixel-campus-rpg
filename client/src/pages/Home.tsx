@@ -27,8 +27,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NkustTimetableImportDialog } from "@/components/NkustTimetableImportDialog";
 import { TranscriptImportDialogV2 } from "@/components/TranscriptImportDialog";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
+import { createLocalBackup, parseLocalBackup } from "@shared/localBackup";
 import { ccee114CourseMap, ccee114RequirementDefinitions, getCcee114PrerequisiteAlerts, getCcee114RequirementProgress, type Ccee114CourseEntry, type Ccee114CourseGroup } from "@shared/ccee114";
 import {
   buildCareerRecommendations,
@@ -300,7 +303,7 @@ function AiPlannerPanel({ section, snapshot }: { section: AiPlanningSection; sna
   </Panel>;
 }
 
-export default function Home() {
+function PrivateQuestContent() {
   const [data, setData] = useState<QuestData>(loadData);
   const [activeView, setActiveView] = useState<View>(() => {
     const requested = window.location.hash.replace("#", "") as View;
@@ -327,9 +330,11 @@ export default function Home() {
   const [importReport, setImportReport] = useState<{ courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null>(null);
   const [fragmentImportError, setFragmentImportError] = useState<string | null>(null);
   const [fragmentHash, setFragmentHash] = useState(() => window.location.hash);
+  const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const mounted = useRef(false);
   const fragmentImportInFlight = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
   const pdfConverter = trpc.transcriptPdf.convert.useMutation({
     onSuccess: (result: { csv: string; summary: string; source: "ai" | "local" }) => {
       setTranscriptText(result.csv);
@@ -483,6 +488,29 @@ export default function Home() {
       navigateToView("plan");
       setCourseForm(null);
       setProjectForm(null);
+    }
+  }
+
+  function downloadLocalBackup() {
+    const date = new Date().toISOString().slice(0, 10);
+    downloadTextFile(createLocalBackup(data as unknown as Record<string, unknown>), `campus-quest-private-backup-${date}.json`, "application/json");
+    setBackupNotice("已下載本機備份。請只透過你自己的方式傳到手機，匯入後即可在 Android APK 內查看。");
+  }
+
+  async function importLocalBackup(file?: File) {
+    if (!file) return;
+    try {
+      if (file.size > 1_000_000) throw new Error("備份檔過大，請選擇 1 MB 以下的 Campus Quest 備份。");
+      const backup = parseLocalBackup(await file.text());
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(backup.data));
+      const restored = loadData();
+      setData(restored);
+      setActiveView(restored.courses.length ? "grades" : "plan");
+      setBackupNotice(`已匯入 ${backup.exportedAt ? new Date(backup.exportedAt).toLocaleDateString("zh-TW") : "這份"} 備份；資料只寫入這台裝置。`);
+    } catch (error) {
+      setBackupNotice(error instanceof Error ? error.message : "無法匯入這份本機備份。");
+    } finally {
+      if (backupFileInputRef.current) backupFileInputRef.current.value = "";
     }
   }
 
@@ -787,7 +815,11 @@ export default function Home() {
             </nav>
             <div className="mt-4 border-t-2 border-[#4b628e] px-3 pt-4">
               <p className="pixel-font text-[8px] leading-5 text-[#93a7cb]">GAME SYSTEM</p>
+              <input ref={backupFileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={event => { void importLocalBackup(event.target.files?.[0]); }} />
+              <button onClick={downloadLocalBackup} className="mt-2 block text-left text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#74e2b1]">下載私人備份（帶到手機）</button>
+              <button onClick={() => backupFileInputRef.current?.click()} className="mt-2 block text-left text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#74e2b1]">匯入私人備份（手機資料）</button>
               <button onClick={resetQuest} className="mt-2 text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#f4c659]">清除本機資料，重新開始</button>
+              {backupNotice && <p className="mt-3 border-l-2 border-[#74e2b1] pl-2 text-[11px] leading-5 text-[#c5f1dd]">{backupNotice}</p>}
             </div>
           </aside>
 
@@ -824,6 +856,20 @@ export default function Home() {
       {transcriptOpen && transcriptPreview?.needsMapping && <TranscriptMappingWizard open headers={transcriptPreview.headers ?? []} sample={transcriptPreview.sample ?? []} mapping={transcriptMapping} onChange={setTranscriptMapping} onApply={() => previewTranscript(transcriptText, transcriptMapping)} onClose={() => setTranscriptPreview(null)} />}
     </main>
   );
+}
+
+function PrivateAccessScreen({ title, description, action }: { title: string; description: string; action?: { label: string; onClick: () => void } }) {
+  return <main className="min-h-screen bg-[#0c1730] px-4 py-8 text-[#fff8df] sm:p-10"><div className="mx-auto flex min-h-[80vh] max-w-xl items-center"><section className="pixel-panel w-full border-2 border-[#f4c659] bg-[#172640] p-6 shadow-[6px_6px_0_#071024] sm:p-8"><div className="flex h-14 w-14 items-center justify-center border-2 border-[#f4c659] bg-[#394d70] text-[#f4c659]"><ShieldCheck size={30} /></div><p className="pixel-font mt-5 text-[9px] tracking-wider text-[#f4c659]">PRIVATE CAMPUS QUEST</p><h1 className="mt-3 text-2xl font-black leading-tight text-[#fff8df]">{title}</h1><p className="mt-4 text-sm leading-7 text-[#c9d7ee]">{description}</p><p className="mt-4 border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d6f7e6]">成績、課程規劃與專題仍只保存在登入後的這台裝置本機；網站不會把它們公開給其他帳號。</p>{action && <button onClick={action.onClick} className="mt-6 inline-flex items-center gap-2 border-2 border-[#f4c659] bg-[#f4c659] px-4 py-3 text-sm font-black text-[#172440] shadow-[3px_3px_0_#071024] transition hover:bg-[#ffe797] active:scale-[.97]"><ShieldCheck size={17} />{action.label}</button>}</section></div></main>;
+}
+
+export default function Home() {
+  const { user, loading, isAuthenticated, logout } = useAuth();
+  const ownerAccess = trpc.auth.ownerAccess.useQuery(undefined, { enabled: isAuthenticated, retry: false, refetchOnWindowFocus: false });
+
+  if (loading || (isAuthenticated && ownerAccess.isLoading)) return <PrivateAccessScreen title="正在確認私人存取權限" description="請稍候，系統正在安全確認登入身分。" />;
+  if (!isAuthenticated) return <PrivateAccessScreen title="這是你的私人學業基地" description="請使用擁有 Campus Quest 的本人帳號登入。登入後才會載入這台裝置上的本機學業資料。" action={{ label: "使用本人帳號登入", onClick: startLogin }} />;
+  if (ownerAccess.isError) return <PrivateAccessScreen title="此帳號沒有存取權限" description={`目前登入的是「${user?.name ?? "未知帳號"}」。Campus Quest 已設為僅供擁有者帳號使用；請切換回本人帳號後再登入。`} action={{ label: "登出並切換帳號", onClick: () => { void logout(); } }} />;
+  return <PrivateQuestContent />;
 }
 
 function DashboardView({ gpa, numericAverage, data, credits, level, xp, skills, recommendations, termGpas, completedProjects, unlockedAchievements, onGo }: { gpa: number; numericAverage: number | null; data: QuestData; credits: ReturnType<typeof calculateCredits>; level: ReturnType<typeof getLevel>; xp: number; skills: ReturnType<typeof getAcademicSkills>; recommendations: ReturnType<typeof buildCareerRecommendations>; termGpas: ReturnType<typeof getTermGpas>; completedProjects: number; unlockedAchievements: number; onGo: (view: View) => void }) {

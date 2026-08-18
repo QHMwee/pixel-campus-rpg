@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { invokeLLM, listLLMModels } from "../_core/llm";
-import { publicProcedure, router } from "../_core/trpc";
+import { adminProcedure, router } from "../_core/trpc";
 
 const sectionSchema = z.enum(["dashboard", "grades", "credits", "quest", "projects", "badges"]);
 
@@ -94,7 +94,7 @@ function normalizeAiAdvice(raw: unknown): AiPlanningAdvice {
 }
 
 export const aiPlannerRouter = router({
-  generate: publicProcedure.input(z.object({ section: sectionSchema, snapshot: snapshotSchema })).mutation(async ({ input }) => {
+  generate: adminProcedure.input(z.object({ section: sectionSchema, snapshot: snapshotSchema })).mutation(async ({ input }) => {
     const fallback = buildLocalPlanningFallback(input.section, input.snapshot);
     try {
       const models = await listLLMModels();

@@ -25,7 +25,19 @@ vi.mock("../_core/llm", () => ({
 import { buildPdfTextFallback, decodePdfBase64, normalizePdfCsv, transcriptPdfRouter } from "./transcriptPdf";
 
 const pdfBase64 = Buffer.from("%PDF-1.4\nroute test").toString("base64");
-const caller = () => transcriptPdfRouter.createCaller({} as TrpcContext);
+const caller = () => transcriptPdfRouter.createCaller({
+  user: {
+    id: 1,
+    openId: "owner",
+    email: "owner@example.com",
+    name: "Owner",
+    loginMethod: "manus",
+    role: "admin",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+    lastSignedIn: new Date(),
+  },
+} as TrpcContext);
 
 beforeEach(() => {
   mocks.destroyPdf.mockReset().mockResolvedValue(undefined);
@@ -55,6 +67,11 @@ describe("transcriptPdf helpers", () => {
 });
 
 describe("transcriptPdf.convert", () => {
+  it("拒絕未登入訪客處理私人 PDF 成績單", async () => {
+    const anonymous = transcriptPdfRouter.createCaller({} as TrpcContext);
+    await expect(anonymous.convert({ fileName: "grades.pdf", pdfBase64 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
   it("returns normalized structured CSV and summary when the AI conversion succeeds", async () => {
     mocks.getPdfText.mockResolvedValue({ text: "115-1    資料庫系統    3    91    選修" });
     mocks.invokeLLM.mockResolvedValue({

@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { PDFParse } from "pdf-parse";
 import { z } from "zod";
 import { invokeLLM, listLLMModels } from "../_core/llm";
-import { publicProcedure, router } from "../_core/trpc";
+import { adminProcedure, router } from "../_core/trpc";
 
 const MAX_PDF_BYTES = 2_000_000;
 const MAX_PDF_TEXT_LENGTH = 16_000;
@@ -82,7 +82,7 @@ function responseText(content: string | Array<unknown>) {
 }
 
 export const transcriptPdfRouter = router({
-  convert: publicProcedure.input(z.object({
+  convert: adminProcedure.input(z.object({
     fileName: z.string().min(1).max(180),
     pdfBase64: z.string().min(1).max(2_700_000),
   })).mutation(async ({ input }): Promise<PdfTranscriptConversion> => {
