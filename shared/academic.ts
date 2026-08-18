@@ -1,4 +1,6 @@
 export type GradePointSystem = "4.0" | "4.3";
+import { ccee114CourseMap, getCcee114RequirementProgress } from "./ccee114";
+
 export type CourseCategory = "required" | "elective" | "general" | "common" | "undeclared-required";
 export type LetterGrade =
   | "A+"
@@ -660,7 +662,7 @@ export function getAcademicSkills(courses: CourseRecord[]): AcademicSkill[] {
     if (!isCountableCourse(course)) return;
     const gradePoint = getGradePoint(course.grade, "4.0");
     if (gradePoint < 2) return;
-    const catalogSkills = courseCatalog.find(item => normalize(item.name) === normalize(course.name))?.skills ?? skillHints.filter(hint => hint.match.test(course.name)).flatMap(hint => hint.skills);
+    const catalogSkills = [...ccee114CourseMap, ...courseCatalog].find(item => normalize(item.name) === normalize(course.name))?.skills ?? skillHints.filter(hint => hint.match.test(course.name)).flatMap(hint => hint.skills);
     const gradeWeight = gradePoint >= 3.7 ? 2 : 1;
     new Set(catalogSkills).forEach(skill => {
       const current = counts.get(skill) ?? { courseCount: 0, points: 0 };
@@ -957,14 +959,23 @@ export function buildCareerRecommendations(
   const skillGaps = profile.targetSkills.filter(skill => !earnedSkills.has(normalize(skill)));
   const careerCreditGap = calculateCredits(courses).elective < goals.elective ? 12 : 0;
 
-  const candidates = courseCatalog
+  const usesCcee114Catalog = goals.total === 128 && goals.required === 51 && goals.elective === 49 && goals.general === 28;
+  const requirementGaps = usesCcee114Catalog
+    ? new Set(getCcee114RequirementProgress(courses, []).filter(item => item.remainingCourses > 0 || item.remainingCredits > 0).map(item => item.id))
+    : new Set<string>();
+  const recommendationCatalog = usesCcee114Catalog
+    ? ccee114CourseMap.map(course => ({ ...course, prerequisites: course.prerequisite ? [course.prerequisite.name] : [] }))
+    : courseCatalog;
+  const candidates = recommendationCatalog
     .filter(course => !completedCourseNames.has(normalize(course.name)))
     .map(course => {
       const missingPrerequisites = course.prerequisites.filter(item => !completedCourseNames.has(normalize(item)));
       const skillBoost = course.skills.filter(skill => skillGaps.some(gap => normalize(gap) === normalize(skill))).length * 8;
       const categoryBoost = preferences.category === "any" || course.category === preferences.category ? 12 : 0;
       const planBoost = plannedNames.has(normalize(course.name)) ? 18 : 0;
-      const score = course.careerFit[careerPath] + skillBoost + careerCreditGap + categoryBoost + planBoost + (missingPrerequisites.length === 0 ? 10 : 0);
+      const cceeRequirement = "requirement" in course && typeof course.requirement === "string" ? course.requirement : undefined;
+      const cceeCoreBoost = cceeRequirement && requirementGaps.has(cceeRequirement) ? 34 : 0;
+      const score = course.careerFit[careerPath] + skillBoost + careerCreditGap + categoryBoost + planBoost + cceeCoreBoost + (missingPrerequisites.length === 0 ? 10 : 0);
       return { ...course, score, missingPrerequisites, unlocked: missingPrerequisites.length === 0 };
     });
 
@@ -984,7 +995,9 @@ export function buildCareerRecommendations(
     skillGaps,
     readiness,
     suggestedCredits,
-    planningContext: plannedNames.size ? `已優先參考你規劃表中的 ${plannedNames.size} 門課；若它們符合先修條件與職涯方向，會在建議中優先顯示。` : "先在課程規劃表寫下想修的課，系統就能把它們納入選課建議。",
+    planningContext: usesCcee114Catalog
+      ? `${plannedNames.size ? `已優先參考你規劃表中的 ${plannedNames.size} 門課；` : ""}推薦清單採用電通系 114 官方課程地圖，並優先補足核心與專業實習最低門檻。`
+      : plannedNames.size ? `已優先參考你規劃表中的 ${plannedNames.size} 門課；若它們符合先修條件與職涯方向，會在建議中優先顯示。` : "先在課程規劃表寫下想修的課，系統就能把它們納入選課建議。",
     recommendedCourses,
     lockedCourses,
     projectSuggestion: {
