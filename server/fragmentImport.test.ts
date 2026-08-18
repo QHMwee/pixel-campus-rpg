@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { gzipSync } from "node:zlib";
-import { decodeFragmentTranscriptImport, encodeFragmentTranscriptImport, mergeFragmentTranscriptImport } from "../shared/fragmentImport";
+import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, encodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "../shared/fragmentImport";
 import { defaultGraduationGoals } from "../shared/academic";
 
 describe("fragment transcript import", () => {
@@ -16,9 +16,20 @@ describe("fragment transcript import", () => {
     const compressed = gzipSync(Buffer.from(JSON.stringify({ version: 1, courses }), "utf8")).toString("base64url");
     await expect(decodeFragmentTranscriptImport(`cq-import-gz=${compressed}`)).resolves.toEqual(courses);
     await expect(decodeFragmentTranscriptImport("grades")).resolves.toBeNull();
-    await expect(decodeFragmentTranscriptImport("cq-import=%%%")).resolves.toBeNull();
+    await expect(decodeFragmentTranscriptImport("cq-import=%%%")) .resolves.toBeNull();
     const wrongVersion = btoa(JSON.stringify({ version: 2, courses: [] }));
     await expect(decodeFragmentTranscriptImport(`cq-import=${wrongVersion}`)).resolves.toBeNull();
+  });
+
+  it("數字成績補寫片段只更新已存在的同學期同課名紀錄，不新增或覆寫其他欄位", async () => {
+    const updates = [{ term: "114-1", name: "資料科學", numericScore: 99 }, { term: "114-2", name: "未曾匯入的課", numericScore: 88 }];
+    const compressed = gzipSync(Buffer.from(JSON.stringify({ version: 1, updates }), "utf8")).toString("base64url");
+    await expect(decodeFragmentNumericScoreUpdate(`cq-score-update-gz=${compressed}`)).resolves.toEqual(updates);
+    const existing = [{ id: "science", term: "114-1", name: "資料科學", credits: 3, grade: "A+" as const, category: "elective" as const, recognition: "approved-external" as const }];
+    const result = mergeFragmentNumericScoreUpdate(existing, updates);
+    expect(result.courses).toEqual([{ ...existing[0], numericScore: 99 }]);
+    expect(result.updated).toEqual([{ ...existing[0], numericScore: 99 }]);
+    expect(result.unmatched).toEqual([{ term: "114-2", name: "未曾匯入的課", numericScore: 88 }]);
   });
 
   it("首次與重複開啟一次性連結都會套用 51／49／28／128 目標，且不重複新增課程", () => {

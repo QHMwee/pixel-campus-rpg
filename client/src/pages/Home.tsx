@@ -28,7 +28,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { NkustTimetableImportDialog } from "@/components/NkustTimetableImportDialog";
 import { TranscriptImportDialogV2 } from "@/components/TranscriptImportDialog";
 import { trpc } from "@/lib/trpc";
-import { decodeFragmentTranscriptImport, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
+import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
 import {
   buildCareerRecommendations,
   applyGraduationGoalTemplate,
@@ -390,6 +390,32 @@ export default function Home() {
         goals: merged.goals,
         hasCompletedPlanIntro: true,
       }));
+      setActiveView("grades");
+      setFragmentHash("#grades");
+      window.history.replaceState(null, "", "/#grades");
+      fragmentImportInFlight.current = false;
+    })();
+  }, [fragmentHash]);
+
+  useEffect(() => {
+    if (!fragmentHash.startsWith("#cq-score-update") || fragmentImportInFlight.current) return;
+    fragmentImportInFlight.current = true;
+    void (async () => {
+      const fragment = fragmentHash.slice(1);
+      const updates = await decodeFragmentNumericScoreUpdate(fragment);
+      if (!updates) {
+        const usesCompressedUpdate = fragmentHash.startsWith("#cq-score-update-gz=");
+        setFragmentImportError(usesCompressedUpdate && typeof DecompressionStream === "undefined"
+          ? "此瀏覽器不支援壓縮數字成績更新連結。請改用最新版 Chrome、Safari 或 Edge 後重新開啟連結。"
+          : "這個數字成績更新連結無法解讀或已不完整，因此沒有修改任何課程。請重新取得完整連結後再試。");
+        setActiveView("grades");
+        setFragmentHash("#grades");
+        window.history.replaceState(null, "", "/#grades");
+        fragmentImportInFlight.current = false;
+        return;
+      }
+      setData(current => ({ ...current, courses: mergeFragmentNumericScoreUpdate(current.courses, updates).courses, hasCompletedPlanIntro: true }));
+      setFragmentImportError(`已處理 ${updates.length} 筆數字成績更新資料；系統僅套用同學期、同課名的既有課程，未新增或刪除任何課程。`);
       setActiveView("grades");
       setFragmentHash("#grades");
       window.history.replaceState(null, "", "/#grades");

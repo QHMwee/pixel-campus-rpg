@@ -12,6 +12,23 @@ export type FragmentImportMergeResult = {
   credits: ReturnType<typeof calculateCredits>;
 };
 
+export type FragmentNumericScoreUpdate = {
+  term: string;
+  name: string;
+  numericScore: number;
+};
+
+export type FragmentNumericScoreUpdatePayload = {
+  version: 1;
+  updates: FragmentNumericScoreUpdate[];
+};
+
+export type FragmentNumericScoreUpdateResult = {
+  courses: CourseRecord[];
+  updated: CourseRecord[];
+  unmatched: FragmentNumericScoreUpdate[];
+};
+
 export function mergeFragmentTranscriptImport(
   existingCourses: CourseRecord[],
   incomingCourses: Omit<CourseRecord, "id">[],
@@ -31,8 +48,45 @@ export function mergeFragmentTranscriptImport(
   };
 }
 
+function scoreUpdateKey(value: Pick<FragmentNumericScoreUpdate, "term" | "name">) {
+  return `${value.term.trim()}::${value.name.trim()}`;
+}
+
+function isNumericScoreUpdate(value: unknown): value is FragmentNumericScoreUpdate {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<FragmentNumericScoreUpdate>;
+  return typeof candidate.term === "string"
+    && typeof candidate.name === "string"
+    && candidate.term.trim().length > 0
+    && candidate.name.trim().length > 0
+    && typeof candidate.numericScore === "number"
+    && Number.isFinite(candidate.numericScore)
+    && candidate.numericScore >= 0
+    && candidate.numericScore <= 100;
+}
+
+/** 僅更新既有課程的原始百分制成績；同一學期與課名未命中時不會建立新課程。 */
+export function mergeFragmentNumericScoreUpdate(existingCourses: CourseRecord[], updates: FragmentNumericScoreUpdate[]): FragmentNumericScoreUpdateResult {
+  const updateByKey = new Map(updates.filter(isNumericScoreUpdate).map(update => [scoreUpdateKey(update), update.numericScore]));
+  const matchedKeys = new Set<string>();
+  const updated: CourseRecord[] = [];
+  const courses = existingCourses.map(course => {
+    const key = scoreUpdateKey(course);
+    const numericScore = updateByKey.get(key);
+    if (numericScore === undefined) return course;
+    matchedKeys.add(key);
+    if (course.numericScore === numericScore) return course;
+    const nextCourse = { ...course, numericScore };
+    updated.push(nextCourse);
+    return nextCourse;
+  });
+  return { courses, updated, unmatched: updates.filter(update => !matchedKeys.has(scoreUpdateKey(update))) };
+}
+
 const plainPrefix = "cq-import=";
 const gzipPrefix = "cq-import-gz=";
+const numericScorePlainPrefix = "cq-score-update=";
+const numericScoreGzipPrefix = "cq-score-update-gz=";
 
 export function encodeFragmentTranscriptImport(payload: FragmentTranscriptPayload): string {
   const bytes = new TextEncoder().encode(JSON.stringify(payload));
@@ -60,6 +114,17 @@ function parsePayload(text: string): Omit<CourseRecord, "id">[] | null {
   }
 }
 
+function parseNumericScoreUpdatePayload(text: string): FragmentNumericScoreUpdate[] | null {
+  try {
+    const payload = JSON.parse(text) as Partial<FragmentNumericScoreUpdatePayload>;
+    return payload.version === 1 && Array.isArray(payload.updates) && payload.updates.every(isNumericScoreUpdate)
+      ? payload.updates
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function gunzip(bytes: Uint8Array): Promise<string | null> {
   try {
     if (typeof DecompressionStream === "undefined") return null;
@@ -80,6 +145,19 @@ export async function decodeFragmentTranscriptImport(fragment: string): Promise<
     const bytes = decodeBase64Url(fragment.slice(gzipPrefix.length));
     const text = bytes ? await gunzip(bytes) : null;
     return text ? parsePayload(text) : null;
+  }
+  return null;
+}
+
+export async function decodeFragmentNumericScoreUpdate(fragment: string): Promise<FragmentNumericScoreUpdate[] | null> {
+  if (fragment.startsWith(numericScorePlainPrefix)) {
+    const bytes = decodeBase64Url(fragment.slice(numericScorePlainPrefix.length));
+    return bytes ? parseNumericScoreUpdatePayload(new TextDecoder().decode(bytes)) : null;
+  }
+  if (fragment.startsWith(numericScoreGzipPrefix)) {
+    const bytes = decodeBase64Url(fragment.slice(numericScoreGzipPrefix.length));
+    const text = bytes ? await gunzip(bytes) : null;
+    return text ? parseNumericScoreUpdatePayload(text) : null;
   }
   return null;
 }
