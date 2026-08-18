@@ -257,7 +257,7 @@ export default function Home() {
   const [data, setData] = useState<QuestData>(loadData);
   const [activeView, setActiveView] = useState<View>(() => {
     const requested = window.location.hash.replace("#", "") as View;
-    return resolveInitialAcademicView(requested.startsWith("cq-import=") ? "grades" : requested, data.hasCompletedPlanIntro, navItems.map(item => item.id)) as View;
+    return resolveInitialAcademicView(requested.startsWith("cq-import") ? "grades" : requested, data.hasCompletedPlanIntro, navItems.map(item => item.id)) as View;
   });
   const [courseForm, setCourseForm] = useState<Omit<CourseRecord, "id"> | null>(null);
   const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
@@ -278,6 +278,7 @@ export default function Home() {
   const [nkustTimetableDraft, setNkustTimetableDraft] = useState<NkustPlannedCourseDraft[]>([]);
   const [nkustImportMode, setNkustImportMode] = useState<"timetable" | "ccee114">("timetable");
   const [importReport, setImportReport] = useState<{ courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null>(null);
+  const [fragmentImportError, setFragmentImportError] = useState<string | null>(null);
   const mounted = useRef(false);
   const fragmentImportHandled = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
@@ -330,27 +331,39 @@ export default function Home() {
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
   useEffect(() => {
-    if (window.location.hash.startsWith("#cq-import=")) return;
+    if (window.location.hash.startsWith("#cq-import")) return;
     window.history.replaceState(null, "", activeView === "dashboard" ? "/" : `/#${activeView}`);
   }, [activeView]);
 
   useEffect(() => {
     if (fragmentImportHandled.current) return;
     fragmentImportHandled.current = true;
-    const fragmentCourses = decodeFragmentTranscriptImport(window.location.hash.slice(1));
-    if (!fragmentCourses) return;
-    const preview = prepareTranscriptDraftImport(fragmentCourses, data.courses);
-    const imported = preview.toImport.map(course => ({ ...course, id: crypto.randomUUID() }));
-    if (imported.length) {
-      const beforeSkills = new Set(getAcademicSkills(data.courses).map(skill => skill.name));
-      const combinedCourses = [...data.courses, ...imported];
-      const gainedSkills = getAcademicSkills(combinedCourses).map(skill => skill.name).filter(skill => !beforeSkills.has(skill));
-      const nextXp = getXp(combinedCourses, data.projects);
-      setImportReport({ courseCount: imported.length, skillNames: gainedSkills, xpGain: nextXp - getXp(data.courses, data.projects), leveledUp: getLevel(nextXp).level > getLevel(getXp(data.courses, data.projects)).level });
-      setData(current => ({ ...current, courses: [...current.courses, ...imported], hasCompletedPlanIntro: true }));
-    }
-    setActiveView("grades");
-    window.history.replaceState(null, "", "/#grades");
+    void (async () => {
+      const fragment = window.location.hash.slice(1);
+      if (!fragment.startsWith("cq-import")) return;
+      const fragmentCourses = await decodeFragmentTranscriptImport(fragment);
+      if (!fragmentCourses) {
+        const usesCompressedImport = window.location.hash.startsWith("#cq-import-gz=");
+        setFragmentImportError(usesCompressedImport && typeof DecompressionStream === "undefined"
+          ? "此瀏覽器不支援壓縮匯入連結。請改用最新版 Chrome、Safari 或 Edge 後重新開啟連結。"
+          : "這個一次性匯入連結無法解讀或已不完整，因此沒有寫入任何成績資料。請重新取得完整連結後再試。");
+        setActiveView("grades");
+        window.history.replaceState(null, "", "/#grades");
+        return;
+      }
+      const preview = prepareTranscriptDraftImport(fragmentCourses, data.courses);
+      const imported = preview.toImport.map(course => ({ ...course, id: crypto.randomUUID() }));
+      if (imported.length) {
+        const beforeSkills = new Set(getAcademicSkills(data.courses).map(skill => skill.name));
+        const combinedCourses = [...data.courses, ...imported];
+        const gainedSkills = getAcademicSkills(combinedCourses).map(skill => skill.name).filter(skill => !beforeSkills.has(skill));
+        const nextXp = getXp(combinedCourses, data.projects);
+        setImportReport({ courseCount: imported.length, skillNames: gainedSkills, xpGain: nextXp - getXp(data.courses, data.projects), leveledUp: getLevel(nextXp).level > getLevel(getXp(data.courses, data.projects)).level });
+        setData(current => ({ ...current, courses: [...current.courses, ...imported], hasCompletedPlanIntro: true }));
+      }
+      setActiveView("grades");
+      window.history.replaceState(null, "", "/#grades");
+    })();
   }, []);
 
   useEffect(() => {
@@ -672,7 +685,7 @@ export default function Home() {
             {activeView === "plan" && <><CoursePlanView courses={data.plannedCourses} completedCredits={credits.total} plannedCredits={plannedCredits} plannedRequiredCredits={plannedRequiredCredits} goals={data.goals} exportableCount={exportablePlanCourses.length} calendarReadyCount={calendarReadyPlanCourses.length} exportNotice={planExportNotice} onAdd={addPlannedCourse} onUpdate={updatePlannedCourse} onRemove={removePlannedCourse} onExportCsv={exportCoursePlanCsv} onExportNotionCsv={exportNotionCoursePlanCsv} onOpenNotion={openNotionFourYearPlan} onExportCalendar={exportCoursePlanCalendar} onComplete={completePlanIntro} /><Panel className="mt-4 overflow-hidden"><PanelTitle eyebrow="NKUST TIMETABLE CSV" title="高科大課表匯入" action={<FileText className="text-[#74e2b1]" />} /><div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto]"><div><p className="text-sm leading-7 text-[#d5e0f2]">可匯入你自行從高科大課程資料查詢整理並另存的 CSV／TSV。系統只讀取學期、課程、學分與類別；任何學號、姓名、成績或缺曠欄位都不會對應或保存。</p><p className="mt-3 border-l-4 border-[#74e2b1] pl-3 text-xs leading-5 text-[#c7f7dc]">先預覽並逐列確認，才會加入本機「規劃中」課程；不會改變 GPA、已完成學分、能力或 XP。</p></div><PixelButton onClick={() => setNkustImportOpen(true)} className="bg-[#245d58] text-[#e1fff6]"><FileText size={16} /> 匯入高科大 CSV</PixelButton></div></Panel></>}
             {activeView === "dashboard" && <DashboardView gpa={gpa} data={data} credits={credits} level={level} xp={xp} skills={academicSkills} recommendations={recommendations} termGpas={termGpas} completedProjects={completedProjects} unlockedAchievements={unlockedAchievements.length} onGo={setActiveView} />}
             {activeView === "plan" && <Panel gold className="mt-4 overflow-hidden"><PanelTitle eyebrow="CCEE 114 CURRICULUM" title="電通系 114 課程結構" action={<GraduationCap className="text-[#f4c659]" />} /><div className="grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_auto]"><div><p className="text-sm leading-7 text-[#d5e0f2]">依高科大電腦與通訊工程系四技 114 學年度入學課程結構，畢業目標為總計 128 學分：系必修 51、系專業選修 49、校共同與通識 28。模板只帶入官方明列的 21 門系必修，不會捏造你尚未選定的 49 學分選修。</p><p className="mt-3 border-l-4 border-[#f4c659] pl-3 text-xs leading-5 text-[#ffe9a4]">載入後仍會先顯示逐列草稿；你確認匯入時才更新這台裝置的學分目標與規劃。既有同學期、同課名課程會略過，不會被覆寫。</p></div><PixelButton onClick={openCcee114RequiredPlan} className="bg-[#f4c659] text-[#152544]"><GraduationCap size={16} /> 載入電通 114 必修</PixelButton></div></Panel>}
-            {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
+            {activeView === "grades" && <GradesView courses={data.courses} system={data.system} gpa={gpa} termGpas={termGpas} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} fragmentImportError={fragmentImportError} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMap courses={data.courses} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /></>}
             {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
@@ -749,11 +762,11 @@ function StatChip({ icon, label, value, tone }: { icon: React.ReactNode; label: 
 function SmallMetric({ label, value }: { label: string; value: string }) { return <div className="border-2 border-[#4c6089] bg-[#17243f] px-3 py-2"><p className="text-[11px] font-bold text-[#93a7cb]">{label}</p><p className="mt-1 text-lg font-black text-[#fff8df]">{value}</p></div>; }
 function ActivityRow({ icon, tone, title, detail }: { icon: React.ReactNode; tone: "gold" | "mint" | "violet"; title: string; detail: string }) { const color = { gold: "border-[#f4c659] text-[#f4c659]", mint: "border-[#74e2b1] text-[#74e2b1]", violet: "border-[#aa97ff] text-[#aa97ff]" }[tone]; return <div className="flex gap-3 py-4"><span className={`flex h-8 w-8 shrink-0 items-center justify-center border-2 ${color} bg-[#14213d]`}>{icon}</span><div><p className="text-sm font-extrabold text-[#f8f2d9]">{title}</p><p className="mt-1 text-xs leading-5 text-[#aebbd3]">{detail}</p></div></div>; }
 
-function GradesView({ courses, system, gpa, termGpas, courseForm, editingCourseId, setCourseForm, onOpen, onImport, importReport, onSave, onCancel, onDelete }: { courses: CourseRecord[]; system: GradePointSystem; gpa: number; termGpas: ReturnType<typeof getTermGpas>; courseForm: Omit<CourseRecord, "id"> | null; editingCourseId: string | null; setCourseForm: React.Dispatch<React.SetStateAction<Omit<CourseRecord, "id"> | null>>; onOpen: (course?: CourseRecord) => void; onImport: () => void; importReport: { courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null; onSave: () => void; onCancel: () => void; onDelete: (id: string) => void }) {
+function GradesView({ courses, system, gpa, termGpas, courseForm, editingCourseId, setCourseForm, onOpen, onImport, importReport, fragmentImportError, onSave, onCancel, onDelete }: { courses: CourseRecord[]; system: GradePointSystem; gpa: number; termGpas: ReturnType<typeof getTermGpas>; courseForm: Omit<CourseRecord, "id"> | null; editingCourseId: string | null; setCourseForm: React.Dispatch<React.SetStateAction<Omit<CourseRecord, "id"> | null>>; onOpen: (course?: CourseRecord) => void; onImport: () => void; importReport: { courseCount: number; skillNames: string[]; xpGain: number; leveledUp: boolean } | null; fragmentImportError: string | null; onSave: () => void; onCancel: () => void; onDelete: (id: string) => void }) {
   const grouped = Array.from(new Set(courses.map(course => course.term))).sort((a, b) => b.localeCompare(a, "zh-Hant"));
   return <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_400px] animate-pop-in">
     <Panel className="overflow-hidden"><PanelTitle eyebrow="GRADE SCROLL" title="成績卷軸" action={<div className="flex flex-wrap gap-2"><PixelButton onClick={onImport} className="bg-[#4a3d95]"><ScrollText size={17} /> 匯入成績單</PixelButton><PixelButton onClick={() => onOpen()} className="bg-[#f4c659] text-[#152544]"><Plus size={17} /> 新增課程</PixelButton></div>} />
-      <div className="p-4 sm:p-5">{importReport && <div className="mb-5 border-2 border-[#f4c659] bg-[#4d4024] p-4 shadow-[3px_3px_0_#080d1f]"><p className="pixel-font text-[8px] leading-5 text-[#ffe797]">TRANSCRIPT LOOT ACQUIRED</p><p className="mt-2 font-black text-[#fff8df]">已匯入 {importReport.courseCount} 門課程，獲得 +{importReport.xpGain} XP{importReport.leveledUp ? "，角色已升級！" : "。"}</p><p className="mt-2 text-xs leading-5 text-[#e2d3a4]">新解鎖能力：{importReport.skillNames.length ? importReport.skillNames.join("、") : "已存在的能力標籤已強化"}</p></div>}<div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><SmallMetric label="累計 GPA" value={gpa.toFixed(2)} /><SmallMetric label="計算制度" value={system} /><SmallMetric label="課程總數" value={`${courses.length}`} /><SmallMetric label="學期數" value={`${termGpas.length}`} /></div>
+      <div className="p-4 sm:p-5">{fragmentImportError && <div className="mb-5 border-2 border-[#e8817a] bg-[#4a2d35] p-4 text-sm font-bold leading-6 text-[#ffd7d2]">{fragmentImportError}</div>}{importReport && <div className="mb-5 border-2 border-[#f4c659] bg-[#4d4024] p-4 shadow-[3px_3px_0_#080d1f]"><p className="pixel-font text-[8px] leading-5 text-[#ffe797]">TRANSCRIPT LOOT ACQUIRED</p><p className="mt-2 font-black text-[#fff8df]">已匯入 {importReport.courseCount} 門課程，獲得 +{importReport.xpGain} XP{importReport.leveledUp ? "，角色已升級！" : "。"}</p><p className="mt-2 text-xs leading-5 text-[#e2d3a4]">新解鎖能力：{importReport.skillNames.length ? importReport.skillNames.join("、") : "已存在的能力標籤已強化"}</p></div>}<div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><SmallMetric label="累計 GPA" value={gpa.toFixed(2)} /><SmallMetric label="計算制度" value={system} /><SmallMetric label="課程總數" value={`${courses.length}`} /><SmallMetric label="學期數" value={`${termGpas.length}`} /></div>
       {grouped.length === 0 ? <EmptyState icon={<ScrollText />} title="卷軸仍是空白" detail="新增第一門課程，開始記錄你的學術冒險。" action={() => onOpen()} /> : <div className="space-y-5">{grouped.map(term => { const entries = courses.filter(course => course.term === term); const termGpa = termGpas.find(item => item.term === term)?.gpa ?? 0; return <div key={term}><div className="mb-2 flex items-center justify-between border-b-2 border-[#4e638c] pb-2"><p className="pixel-font text-[9px] leading-5 text-[#f4c659]">{term} TERM</p><span className="text-xs font-black text-[#d9e5fb]">學期 GPA <b className="ml-1 text-base text-[#f4c659]">{termGpa.toFixed(2)}</b></span></div><div className="overflow-x-auto"><table className="w-full min-w-[620px] text-left text-sm"><thead className="text-xs text-[#9caed0]"><tr><th className="pb-2 pl-2">課程</th><th className="pb-2">類別</th><th className="pb-2 text-center">學分</th><th className="pb-2 text-center">等第</th><th className="pb-2 text-center">點數</th><th className="pb-2 text-right">操作</th></tr></thead><tbody>{entries.map(course => <tr key={course.id} className="border-t-2 border-[#334b73] hover:bg-[#213554]"><td className="py-3 pl-2 font-bold text-[#fff8df]">{course.name}</td><td><span className={`inline-flex px-2 py-1 text-xs font-black ${categoryTone[course.category]}`}>{categoryLabel[course.category]}</span></td><td className="text-center font-bold text-[#d8e4fc]">{course.credits}</td><td className="text-center"><span className="inline-flex min-w-9 justify-center border-2 border-[#f4c659] bg-[#4e4023] px-2 py-1 font-black text-[#ffe58e]">{course.grade}</span></td><td className="text-center font-bold text-[#bcd1f6]">{getGradePoint(course.grade, system).toFixed(1)}</td><td className="pr-2 text-right"><button onClick={() => onOpen(course)} className="mr-2 p-1.5 text-[#b9c8e6] hover:text-[#f4c659]" aria-label={`編輯 ${course.name}`}><Pencil size={16} /></button><button onClick={() => window.confirm(`確定刪除「${course.name}」嗎？`) && onDelete(course.id)} className="p-1.5 text-[#b9c8e6] hover:text-[#f28682]" aria-label={`刪除 ${course.name}`}><Trash2 size={16} /></button></td></tr>)}</tbody></table></div></div>; })}</div>}</div>
     </Panel>
     <div className="space-y-4"><RecognitionStatusSummary courses={courses} /><CourseEditor form={courseForm} editing={Boolean(editingCourseId)} setForm={setCourseForm} onSave={onSave} onCancel={onCancel} /></div>
