@@ -35,60 +35,6 @@ export type ProjectRecord = {
   status: ProjectStatus;
 };
 
-export type ExamProjectKind = "language" | "programming" | "certification" | "competition";
-
-export type ExamProject = {
-  id: string;
-  name: string;
-  kind: ExamProjectKind;
-  goal: string;
-  description: string;
-  targetDate: string;
-  status: ProjectStatus;
-  source: "notion" | "local";
-  sourceKey?: string;
-  sourceUrl?: string;
-};
-
-export type NotionExamTemplate = Omit<ExamProject, "id"> & { sourceKey: string };
-
-export const notionExamProjectTemplates: NotionExamTemplate[] = [
-  {
-    name: "多益 750 衝刺 65 天計畫",
-    kind: "language",
-    goal: "65 天內由 590 分提升至 750 分",
-    description: "依序完成基礎穩固、閱讀特訓與實戰演練三階段；每日完成情況仍以 Notion 每日進度追蹤為準。",
-    targetDate: "",
-    status: "planning",
-    source: "notion",
-    sourceKey: "notion-toeic-750-65",
-    sourceUrl: "https://app.notion.com/p/3a00b85565a58185b017f9d1055372a1?pvs=204",
-  },
-  {
-    name: "CPE 衝刺計畫",
-    kind: "programming",
-    goal: "穩定通過 2 題，並挑戰 3 題",
-    description: "以每日進度、題目資料庫、演算法筆記與錯題／盲點複習為支援；網站只保留可自行調整的專案摘要。",
-    targetDate: "",
-    status: "planning",
-    source: "notion",
-    sourceKey: "notion-cpe-sprint",
-    sourceUrl: "https://app.notion.com/p/3a40b85565a580b8ae74e973e3ff10e6?pvs=204",
-  },
-];
-
-export function getNotionExamImportCandidates(projects: ExamProject[]) {
-  return notionExamProjectTemplates.filter(template => !projects.some(project => project.sourceKey === template.sourceKey));
-}
-
-export function getExamProjectStats(projects: ExamProject[]) {
-  return {
-    total: projects.length,
-    active: projects.filter(project => project.status === "active").length,
-    done: projects.filter(project => project.status === "done").length,
-  };
-}
-
 export type GraduationGoals = {
   total: number;
   required: number;
@@ -187,6 +133,16 @@ export type CoursePlanExportEntry = {
   priority: "must" | "important" | "explore";
 };
 
+export type NkustPlannedCourseDraft = Omit<CoursePlanExportEntry, "id">;
+export type NkustTimetableIssue = { row: number; message: string; raw: string };
+export type NkustTimetableImportPreview = {
+  accepted: NkustPlannedCourseDraft[];
+  toImport: NkustPlannedCourseDraft[];
+  duplicates: NkustPlannedCourseDraft[];
+  issues: NkustTimetableIssue[];
+  headers: string[];
+};
+
 const planCategoryLabels: Record<CourseCategory, string> = { required: "必修", elective: "選修", general: "通識" };
 const planPriorityLabels: Record<CoursePlanExportEntry["priority"], string> = { must: "一定要修", important: "很想安排", explore: "還在考慮" };
 
@@ -265,7 +221,6 @@ export function createBlankAcademicStart() {
     system: "4.3" as const,
     courses: [] as CourseRecord[],
     projects: [] as ProjectRecord[],
-    examProjects: [] as ExamProject[],
   };
 }
 
@@ -288,6 +243,126 @@ function parseDelimitedRow(line: string, delimiter: string) {
   }
   values.push(current.trim());
   return values.map(value => value.replace(/^"|"$/g, "").trim());
+}
+
+const nkustTemplateHeaders = ["學年學期", "課號", "科目名稱", "學分", "課程類別", "校區", "授課教師", "星期", "節次", "教室"];
+
+function nkustHeaderIndex(value: string) {
+  const normalized = normalize(value).replace(/[\s_\-（）()]/g, "");
+  if (["學年學期", "學期", "學年度", "開課學期", "term", "semester"].includes(normalized)) return "term" as const;
+  if (["課號", "科目代碼", "課程代碼", "coursecode"].includes(normalized)) return "courseCode" as const;
+  if (["科目名稱", "課程名稱", "科目", "課名", "coursename", "subject"].includes(normalized)) return "name" as const;
+  if (["學分", "學分數", "credit", "credits"].includes(normalized)) return "credits" as const;
+  if (["課程類別", "類別", "必選修", "修別", "category", "type"].includes(normalized)) return "category" as const;
+  if (["校區", "上課校區", "campus"].includes(normalized)) return "campus" as const;
+  if (["教師", "授課教師", "teacher", "instructor"].includes(normalized)) return "teacher" as const;
+  if (["星期", "上課星期", "weekday", "day"].includes(normalized)) return "weekday" as const;
+  if (["節次", "上課節次", "時間", "period", "time"].includes(normalized)) return "period" as const;
+  if (["教室", "上課地點", "地點", "room", "location"].includes(normalized)) return "room" as const;
+  return undefined;
+}
+
+function normalizeNkustTerm(value: string) {
+  const trimmed = value.trim().replace(/[／_]/g, "/");
+  const academicTerm = trimmed.match(/(\d{3,4})\s*(?:學年度)?\s*(?:[-/]\s*)?(?:第)?\s*([12])\s*(?:學期)?/);
+  return academicTerm ? `${academicTerm[1]}-${academicTerm[2]}` : trimmed;
+}
+
+function nkustCategory(value: string | undefined): CourseCategory {
+  const normalized = normalize(value ?? "");
+  if (/(必修|required|compulsory|必選)/.test(normalized)) return "required";
+  if (/(通識|general|liberal|共同)/.test(normalized)) return "general";
+  return "elective";
+}
+
+function nkustPriority(category: CourseCategory): NkustPlannedCourseDraft["priority"] {
+  return category === "required" ? "must" : "important";
+}
+
+function planCourseKey(course: Pick<NkustPlannedCourseDraft, "term" | "name">) {
+  return `${normalize(course.term)}::${normalize(course.name)}`;
+}
+
+function isValidPlannedCourse(course: NkustPlannedCourseDraft) {
+  return Boolean(course.term.trim() && course.name.trim())
+    && Number.isFinite(course.credits)
+    && course.credits > 0
+    && course.credits <= 12
+    && isCourseCategory(course.category)
+    && ["must", "important", "explore"].includes(course.priority);
+}
+
+export function buildNkustTimetableTemplate() {
+  return `\uFEFF${nkustTemplateHeaders.map(escapeCsvCell).join(",")}\r\n`;
+}
+
+/** 解析高科大課表查詢或範本整理出的 CSV／TSV。隱私欄位未列為對應目標，因此不會保留。 */
+export function parseNkustTimetable(text: string) {
+  const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  const accepted: NkustPlannedCourseDraft[] = [];
+  const issues: NkustTimetableIssue[] = [];
+  if (!lines.length) return { accepted, issues: [{ row: 0, message: "請上傳或貼上高科大課表 CSV。", raw: "" }], headers: [] };
+  const delimiter = transcriptDelimiter(lines[0]);
+  const headers = parseDelimitedRow(lines[0], delimiter);
+  const columns = Object.fromEntries(headers.map((header, index) => {
+    const field = nkustHeaderIndex(header);
+    return field ? [field, index] : [];
+  })) as Partial<Record<"term" | "courseCode" | "name" | "credits" | "category" | "campus" | "teacher" | "weekday" | "period" | "room", number>>;
+  if (columns.term === undefined || columns.name === undefined) {
+    const missing = [columns.term === undefined ? "學年學期" : null, columns.name === undefined ? "科目名稱" : null].filter(Boolean).join("、");
+    return { accepted, issues: [{ row: 1, message: `找不到必要欄位：${missing}。請改用高科大 CSV 範本，或將標題改為可辨識名稱。`, raw: lines[0] }], headers };
+  }
+  for (let index = 1; index < lines.length; index += 1) {
+    const row = parseDelimitedRow(lines[index], delimiter);
+    const term = normalizeNkustTerm(row[columns.term] ?? "");
+    const name = (row[columns.name] ?? "").trim();
+    if (!term || !name) {
+      issues.push({ row: index + 1, message: "需要有效的學年學期與科目名稱。", raw: "" });
+      continue;
+    }
+    const category = nkustCategory(columns.category === undefined ? undefined : row[columns.category]);
+    const credits = columns.credits === undefined ? 0 : Number(row[columns.credits]);
+    const candidate: NkustPlannedCourseDraft = { term, name, credits, category, priority: nkustPriority(category) };
+    accepted.push(candidate);
+    if (!Number.isFinite(credits) || credits <= 0 || credits > 12) {
+      issues.push({ row: index + 1, message: "學分需為 1–12 的數字；可在預覽中手動補正後再確認匯入。", raw: "" });
+    }
+  }
+  return { accepted, issues, headers };
+}
+
+export function prepareNkustTimetableImport(text: string, existingCourses: Array<Pick<NkustPlannedCourseDraft, "term" | "name">>) {
+  const parsed = parseNkustTimetable(text);
+  return prepareNkustTimetableDraftImport(parsed.accepted, existingCourses, parsed.headers, parsed.issues);
+}
+
+/** 重新驗證使用者在課表預覽中調整過的草稿，且不覆蓋既有課程規劃。 */
+export function prepareNkustTimetableDraftImport(
+  draft: NkustPlannedCourseDraft[],
+  existingCourses: Array<Pick<NkustPlannedCourseDraft, "term" | "name">>,
+  headers: string[] = nkustTemplateHeaders,
+  initialIssues: NkustTimetableIssue[] = [],
+): NkustTimetableImportPreview {
+  const issues = initialIssues.filter(issue => issue.row === 0);
+  const accepted: NkustPlannedCourseDraft[] = [];
+  draft.forEach((course, index) => {
+    const normalized = { ...course, term: normalizeNkustTerm(course.term), name: course.name.trim() };
+    if (!isValidPlannedCourse(normalized)) {
+      issues.push({ row: index + 2, message: "需要有效的學年學期、課程名稱、1–12 學分、課程類別與優先程度。", raw: "" });
+      return;
+    }
+    accepted.push(normalized);
+  });
+  const known = new Set(existingCourses.map(planCourseKey));
+  const seen = new Set<string>();
+  const toImport: NkustPlannedCourseDraft[] = [];
+  const duplicates: NkustPlannedCourseDraft[] = [];
+  accepted.forEach(course => {
+    const key = planCourseKey(course);
+    if (known.has(key) || seen.has(key)) duplicates.push(course);
+    else { seen.add(key); toImport.push(course); }
+  });
+  return { accepted, toImport, duplicates, issues, headers };
 }
 
 function transcriptDelimiter(line: string) { return line.includes("\t") ? "\t" : ","; }

@@ -4,15 +4,14 @@ import {
   buildCareerRecommendations,
   buildCoursePlanCalendar,
   buildCoursePlanCsv,
+  buildNkustTimetableTemplate,
   buildNotionCoursePlanCsv,
   calculateCredits,
   calculatePlannedCredits,
   calculateGpa,
   createBlankAcademicStart,
   getCreditPlanStatus,
-  getExamProjectStats,
   getCalendarReadyPlanCourses,
-  getNotionExamImportCandidates,
   getAchievements,
   getAcademicSkills,
   getGradePoint,
@@ -21,6 +20,8 @@ import {
   getXp,
   prepareTranscriptDraftImport,
   prepareTranscriptImport,
+  prepareNkustTimetableDraftImport,
+  prepareNkustTimetableImport,
   resolveInitialAcademicView,
   type CourseRecord,
   type ProjectRecord,
@@ -197,7 +198,7 @@ describe("academic calculations", () => {
   });
 
   it("空白起始不含示範資料、固定使用 4.3 制，並導向課程規劃頁", () => {
-    expect(createBlankAcademicStart()).toEqual({ system: "4.3", courses: [], projects: [], examProjects: [] });
+    expect(createBlankAcademicStart()).toEqual({ system: "4.3", courses: [], projects: [] });
     expect(resolveInitialAcademicView("", false, ["plan", "dashboard"])).toBe("plan");
     expect(resolveInitialAcademicView("", true, ["plan", "dashboard"])).toBe("dashboard");
     expect(resolveInitialAcademicView("dashboard", false, ["plan", "dashboard"])).toBe("dashboard");
@@ -256,14 +257,25 @@ describe("academic calculations", () => {
     expect(csv).toContain('"規劃中"');
   });
 
-  it("會提供多益與 CPE 的 Notion 證照專案範本，並以來源鍵避免重複帶入", () => {
-    const candidates = getNotionExamImportCandidates([]);
-    expect(candidates.map(project => project.name)).toEqual(["多益 750 衝刺 65 天計畫", "CPE 衝刺計畫"]);
-    expect(candidates[0]?.goal).toContain("590");
-    expect(candidates[1]?.goal).toContain("2 題");
+  it("可解析高科大 CSV 標題別名、正規化學期並忽略非規劃欄位", () => {
+    const preview = prepareNkustTimetableImport("學年學期,課號,科目名稱,學分,必選修,校區,授課教師,星期,節次,教室\n115學年度第1學期,CS101,資料結構,3,必修,第一校區,王老師,星期一,3,A201", []);
+    expect(preview.toImport).toEqual([{ term: "115-1", name: "資料結構", credits: 3, category: "required", priority: "must" }]);
+    expect(preview.issues).toHaveLength(0);
+  });
 
-    const imported = [{ ...candidates[0], id: "exam-1" }];
-    expect(getNotionExamImportCandidates(imported)).toHaveLength(1);
-    expect(getExamProjectStats([...imported, { ...candidates[1], id: "exam-2", status: "done" }])).toEqual({ total: 2, active: 0, done: 1 });
+  it("高科大課表會在確認前要求修正無效學分，並略過既有或同檔重複課程", () => {
+    const existing = [{ term: "115-1", name: "資料結構" }];
+    const preview = prepareNkustTimetableImport("學期,科目名稱,學分,課程類別\n115-1,資料結構,3,必修\n115-1,資料庫系統,0,選修\n115-1,資料探勘,3,選修\n115-1,資料探勘,3,選修", existing);
+    expect(preview.toImport).toEqual([{ term: "115-1", name: "資料探勘", credits: 3, category: "elective", priority: "important" }]);
+    expect(preview.duplicates).toHaveLength(2);
+    expect(preview.issues).toHaveLength(1);
+    const corrected = prepareNkustTimetableDraftImport([{ term: "115/1", name: "資料庫系統", credits: 3, category: "elective", priority: "important" }], existing);
+    expect(corrected.toImport[0]).toMatchObject({ term: "115-1", name: "資料庫系統" });
+  });
+
+  it("可產生不含示範課程的高科大 CSV 空白範本", () => {
+    const template = buildNkustTimetableTemplate();
+    expect(template).toContain('\uFEFF"學年學期","課號","科目名稱","學分"');
+    expect(template.trim().split(/\r?\n/)).toHaveLength(1);
   });
 });
