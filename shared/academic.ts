@@ -47,12 +47,12 @@ export type GraduationGoals = {
   semestersLeft: number;
 };
 
-/** 未選擇系所模板時使用的通用學分目標。 */
+/** Campus Quest 個人化網站的預設目標，採電通系 114 課程結構。 */
 export const defaultGraduationGoals: GraduationGoals = {
   total: 128,
-  required: 60,
-  elective: 42,
-  general: 26,
+  required: 51,
+  elective: 49,
+  general: 28,
   semestersLeft: 4,
 };
 

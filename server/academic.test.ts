@@ -264,6 +264,7 @@ describe("academic calculations", () => {
 
   it("空白起始不含示範資料、固定使用 4.3 制，並導向課程規劃頁", () => {
     expect(createBlankAcademicStart()).toEqual({ system: "4.3", courses: [], projects: [] });
+    expect(defaultGraduationGoals).toMatchObject({ total: 128, required: 51, elective: 49, general: 28 });
     expect(resolveInitialAcademicView("", false, ["plan", "dashboard"])).toBe("plan");
     expect(resolveInitialAcademicView("", true, ["plan", "dashboard"])).toBe("dashboard");
     expect(resolveInitialAcademicView("dashboard", false, ["plan", "dashboard"])).toBe("dashboard");

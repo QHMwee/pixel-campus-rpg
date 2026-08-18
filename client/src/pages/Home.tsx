@@ -158,10 +158,12 @@ function loadData(): QuestData {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (!saved) return emptyQuestData;
     const parsed = JSON.parse(saved) as Partial<QuestData>;
+    const restoredGoals = { ...initialGoals, ...(parsed.goals ?? {}) };
+    const usesLegacyGenericGoals = restoredGoals.total === 128 && restoredGoals.required === 60 && restoredGoals.elective === 42 && restoredGoals.general === 26;
     return {
       courses: Array.isArray(parsed.courses) ? parsed.courses.filter(course => !legacyDemoCourseIds.has(course.id)) : [],
       projects: Array.isArray(parsed.projects) ? parsed.projects.filter(project => !legacyDemoProjectIds.has(project.id)) : [],
-      goals: { ...initialGoals, ...(parsed.goals ?? {}) },
+      goals: usesLegacyGenericGoals ? { ...ccee114GraduationGoals, semestersLeft: restoredGoals.semestersLeft } : restoredGoals,
       system: "4.3",
       careerPath: careerProfiles.some(profile => profile.id === parsed.careerPath) ? parsed.careerPath as CareerPath : "frontend",
       preferences: {
