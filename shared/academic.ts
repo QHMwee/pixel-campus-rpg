@@ -476,11 +476,11 @@ function transcriptGrade(value: string): LetterGrade | undefined {
   return "F";
 }
 function transcriptRecognition(value: string): CreditRecognition | undefined {
-  const normalized = normalize(value).replace(/[\s／/_-]/g, "");
+  const normalized = normalize(value).replace(/[\s／/_()（）-]/g, "");
   if (["一般系內", "一般", "standard"].includes(normalized)) return "standard";
   if (["外系已認列", "approvedexternal"].includes(normalized)) return "approved-external";
   if (["待確認認列", "pending"].includes(normalized)) return "pending";
-  if (["僅計gpa", "gpaonly"].includes(normalized)) return "gpa-only";
+  if (["僅計gpa", "gpaonly", "不分系課程", "不分系課程僅計gpa"].includes(normalized)) return "gpa-only";
   return undefined;
 }
 export function isCceeCommonRequiredCourseName(name: string) {

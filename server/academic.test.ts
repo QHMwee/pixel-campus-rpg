@@ -186,6 +186,14 @@ describe("academic calculations", () => {
     expect(calculateCredits(transferred)).toEqual({ total: 3, required: 0, elective: 3, general: 0, common: 0 });
   });
 
+  it("可將不分系課程選項解析為僅計 GPA，且完全不增加電通系畢業學分", () => {
+    const preview = prepareTranscriptImport("學期,課程名稱,學分,成績,類別,畢業認列\n114-1,不分系探索課,3,88,選修,不分系課程（僅計 GPA）", []);
+    expect(preview.toImport).toEqual([{ term: "114-1", name: "不分系探索課", credits: 3, grade: "A", category: "elective", recognition: "gpa-only" }]);
+    const imported = preview.toImport.map((course, index) => ({ ...course, id: `undeclared-${index}` }));
+    expect(calculateGpa(imported, "4.3")).toBe(4);
+    expect(calculateCredits(imported)).toEqual({ total: 0, required: 0, elective: 0, general: 0, common: 0 });
+  });
+
   it("轉系課程即使認列狀態不同仍按同學期與課名略過重複，待確認認列只先計入 GPA", () => {
     const existing: CourseRecord[] = [
       { id: "existing-transfer", term: "114-1", name: "資料科學", credits: 3, grade: "A+", category: "elective", recognition: "approved-external" },

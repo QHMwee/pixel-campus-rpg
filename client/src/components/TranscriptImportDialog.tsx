@@ -13,7 +13,7 @@ const recognitionLabel: Record<CreditRecognition, string> = {
   standard: "一般／系內",
   "approved-external": "外系已認列",
   pending: "待確認認列",
-  "gpa-only": "僅計 GPA",
+  "gpa-only": "不分系課程（僅計 GPA）",
 };
 
 type TranscriptImportDialogProps = {
