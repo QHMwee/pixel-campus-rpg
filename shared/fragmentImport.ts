@@ -1,9 +1,33 @@
-import type { CourseRecord } from "./academic";
+import { applyGraduationGoalTemplate, calculateCredits, prepareTranscriptDraftImport, type CourseRecord, type GraduationGoals } from "./academic";
 
 export type FragmentTranscriptPayload = {
   version: 1;
   courses: Omit<CourseRecord, "id">[];
 };
+
+export type FragmentImportMergeResult = {
+  courses: CourseRecord[];
+  imported: CourseRecord[];
+  goals: GraduationGoals;
+  credits: ReturnType<typeof calculateCredits>;
+};
+
+export function mergeFragmentTranscriptImport(
+  existingCourses: CourseRecord[],
+  incomingCourses: Omit<CourseRecord, "id">[],
+  currentGoals: GraduationGoals,
+  createId: () => string,
+): FragmentImportMergeResult {
+  const preview = prepareTranscriptDraftImport(incomingCourses, existingCourses);
+  const imported = preview.toImport.map(course => ({ ...course, id: createId() }));
+  const courses = [...existingCourses, ...imported];
+  return {
+    courses,
+    imported,
+    goals: applyGraduationGoalTemplate(currentGoals, "ccee114"),
+    credits: calculateCredits(courses),
+  };
+}
 
 const plainPrefix = "cq-import=";
 const gzipPrefix = "cq-import-gz=";

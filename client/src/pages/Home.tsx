@@ -28,7 +28,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { NkustTimetableImportDialog } from "@/components/NkustTimetableImportDialog";
 import { TranscriptImportDialogV2 } from "@/components/TranscriptImportDialog";
 import { trpc } from "@/lib/trpc";
-import { decodeFragmentTranscriptImport } from "@shared/fragmentImport";
+import { decodeFragmentTranscriptImport, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
 import {
   buildCareerRecommendations,
   applyGraduationGoalTemplate,
@@ -351,16 +351,21 @@ export default function Home() {
         window.history.replaceState(null, "", "/#grades");
         return;
       }
-      const preview = prepareTranscriptDraftImport(fragmentCourses, data.courses);
-      const imported = preview.toImport.map(course => ({ ...course, id: crypto.randomUUID() }));
+      const merged = mergeFragmentTranscriptImport(data.courses, fragmentCourses, data.goals, () => crypto.randomUUID());
+      const imported = merged.imported;
       if (imported.length) {
         const beforeSkills = new Set(getAcademicSkills(data.courses).map(skill => skill.name));
-        const combinedCourses = [...data.courses, ...imported];
+        const combinedCourses = merged.courses;
         const gainedSkills = getAcademicSkills(combinedCourses).map(skill => skill.name).filter(skill => !beforeSkills.has(skill));
         const nextXp = getXp(combinedCourses, data.projects);
         setImportReport({ courseCount: imported.length, skillNames: gainedSkills, xpGain: nextXp - getXp(data.courses, data.projects), leveledUp: getLevel(nextXp).level > getLevel(getXp(data.courses, data.projects)).level });
-        setData(current => ({ ...current, courses: [...current.courses, ...imported], hasCompletedPlanIntro: true }));
       }
+      setData(current => ({
+        ...current,
+        courses: merged.courses,
+        goals: merged.goals,
+        hasCompletedPlanIntro: true,
+      }));
       setActiveView("grades");
       window.history.replaceState(null, "", "/#grades");
     })();

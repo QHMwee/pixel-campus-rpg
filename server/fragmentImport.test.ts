@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { gzipSync } from "node:zlib";
-import { decodeFragmentTranscriptImport, encodeFragmentTranscriptImport } from "../shared/fragmentImport";
+import { decodeFragmentTranscriptImport, encodeFragmentTranscriptImport, mergeFragmentTranscriptImport } from "../shared/fragmentImport";
+import { defaultGraduationGoals } from "../shared/academic";
 
 describe("fragment transcript import", () => {
   it("以 URL-safe 片段往返包含繁體中文與認列狀態的成績，且不需伺服器參與", async () => {
@@ -18,5 +19,27 @@ describe("fragment transcript import", () => {
     await expect(decodeFragmentTranscriptImport("cq-import=%%%")).resolves.toBeNull();
     const wrongVersion = btoa(JSON.stringify({ version: 2, courses: [] }));
     await expect(decodeFragmentTranscriptImport(`cq-import=${wrongVersion}`)).resolves.toBeNull();
+  });
+
+  it("首次與重複開啟一次性連結都會套用 51／49／28／128 目標，且不重複新增課程", () => {
+    const incoming = [
+      { term: "114-1", name: "系必修測試甲", credits: 8, grade: "A" as const, category: "required" as const, recognition: "standard" as const },
+      { term: "114-1", name: "系必修測試乙", credits: 6, grade: "A" as const, category: "required" as const, recognition: "standard" as const },
+      { term: "114-1", name: "外系已認列測試", credits: 12, grade: "A" as const, category: "elective" as const, recognition: "approved-external" as const },
+      { term: "114-1", name: "通識測試甲", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
+      { term: "114-1", name: "通識測試乙", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
+      { term: "114-1", name: "通識測試丙", credits: 9, grade: "A" as const, category: "general" as const, recognition: "standard" as const },
+      { term: "114-1", name: "僅計 GPA 測試", credits: 4, grade: "A" as const, category: "elective" as const, recognition: "gpa-only" as const },
+    ];
+    const first = mergeFragmentTranscriptImport([], incoming, defaultGraduationGoals, () => "import-1");
+    expect(first.imported).toHaveLength(7);
+    expect(first.goals).toMatchObject({ total: 128, required: 51, elective: 49, general: 28 });
+    expect(first.credits).toMatchObject({ total: 53, required: 14, elective: 12, general: 27 });
+
+    const repeated = mergeFragmentTranscriptImport(first.courses, incoming, first.goals, () => "should-not-exist");
+    expect(repeated.imported).toHaveLength(0);
+    expect(repeated.courses).toHaveLength(7);
+    expect(repeated.goals).toMatchObject({ total: 128, required: 51, elective: 49, general: 28 });
+    expect(repeated.credits).toMatchObject({ total: 53, required: 14, elective: 12, general: 27 });
   });
 });
