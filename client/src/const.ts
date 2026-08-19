@@ -6,7 +6,7 @@ export { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 // moment you want to navigate, e.g. `onClick={() => startLogin()}`.
 //
 // It has SIDE EFFECTS — it mints a one-time nonce, writes the __Host- state
-// cookie, and navigates immediately — so the cookie nonce always matches the
+// cookie, then navigates after the cookie write has been committed — so the cookie nonce always matches the
 // `state` it sends. Do NOT call it during render (no `href={startLogin()}` /
 // `loginUrl={...}`): each call overwrites the cookie, so a stray render-phase
 // call would desync it from an in-flight login and the callback would reject it
@@ -18,7 +18,10 @@ export const startLogin = () => {
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
 
   const nonce = crypto.randomUUID();
-  document.cookie = `${OAUTH_STATE_COOKIE}=${nonce}; Path=/; Max-Age=600; SameSite=None; Secure`;
+  // OAuth returns through a top-level HTTPS GET. Lax keeps this short-lived
+  // cookie available at that callback while avoiding Android WebView treating
+  // the cross-site OAuth portal transition as a third-party cookie flow.
+  document.cookie = `${OAUTH_STATE_COOKIE}=${nonce}; Path=/; Max-Age=600; SameSite=Lax; Secure`;
   const state = encodeOAuthState({ redirectUri, nonce });
 
   const url = new URL(`${oauthPortalUrl}/app-auth`);
@@ -27,5 +30,7 @@ export const startLogin = () => {
   url.searchParams.set("state", state);
   url.searchParams.set("type", "signIn");
 
-  window.location.href = url.toString();
+  // Android WebView may flush document.cookie asynchronously. A short delay
+  // prevents the OAuth callback arriving before the nonce cookie is persisted.
+  window.setTimeout(() => window.location.assign(url.toString()), 180);
 };
