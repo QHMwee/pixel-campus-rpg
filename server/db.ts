@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { academicSyncStates, InsertUser, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,43 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+export type PrivateAcademicSyncState = {
+  revision: number;
+  payload: string;
+  updatedAt: Date;
+};
+
+export async function getPrivateAcademicSyncState(ownerId: number): Promise<PrivateAcademicSyncState | null> {
+  const db = await getDb();
+  if (!db) throw new Error("私人同步資料庫暫時無法使用。");
+  const rows = await db.select({ revision: academicSyncStates.revision, payload: academicSyncStates.payload, updatedAt: academicSyncStates.updatedAt })
+    .from(academicSyncStates)
+    .where(eq(academicSyncStates.ownerId, ownerId))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createPrivateAcademicSyncState(ownerId: number, payload: string): Promise<PrivateAcademicSyncState | null> {
+  const db = await getDb();
+  if (!db) throw new Error("私人同步資料庫暫時無法使用。");
+  try {
+    await db.insert(academicSyncStates).values({ ownerId, revision: 1, payload });
+    return await getPrivateAcademicSyncState(ownerId);
+  } catch (error) {
+    const duplicate = error instanceof Error && /duplicate|unique/i.test(error.message);
+    if (duplicate) return null;
+    throw error;
+  }
+}
+
+export async function updatePrivateAcademicSyncState(ownerId: number, baseRevision: number, payload: string): Promise<PrivateAcademicSyncState | null> {
+  const db = await getDb();
+  if (!db) throw new Error("私人同步資料庫暫時無法使用。");
+  const result = await db.update(academicSyncStates)
+    .set({ payload, revision: baseRevision + 1, updatedAt: new Date() })
+    .where(and(eq(academicSyncStates.ownerId, ownerId), eq(academicSyncStates.revision, baseRevision)));
+  if (result[0].affectedRows !== 1) return null;
+  return await getPrivateAcademicSyncState(ownerId);
+}
+
+// TODO: add feature queries here as your app grows.

@@ -110,7 +110,7 @@ type QuestData = {
   courses: CourseRecord[];
   projects: ProjectRecord[];
   goals: GraduationGoals;
-  system: GradePointSystem;
+  system: "4.3";
   careerPath: CareerPath;
   preferences: RecommendationPreferences;
   plannedCourses: PlannedCourse[];
@@ -172,31 +172,61 @@ const emptyCourse = (): Omit<CourseRecord, "id"> => ({ term: "114-2", name: "", 
 const emptyProject = (): Omit<ProjectRecord, "id"> => ({ name: "", description: "", tags: [], startDate: "2026-02", endDate: "2026-06", status: "planning" });
 const emptyPlannedCourse = (): PlannedCourse => ({ id: crypto.randomUUID(), term: "", name: "", credits: 3, category: "required", priority: "must" });
 
+function normalizeQuestData(parsed: Partial<QuestData>): QuestData {
+  const restoredGoals = { ...initialGoals, ...(parsed.goals ?? {}) };
+  const usesLegacyGenericGoals = restoredGoals.total === 128 && restoredGoals.required === 60 && restoredGoals.elective === 42 && restoredGoals.general === 26;
+  return {
+    courses: migrateUndeclaredRequiredCourses(migrateCceeCommonRequiredCourses(Array.isArray(parsed.courses) ? parsed.courses.filter(course => !legacyDemoCourseIds.has(course.id)) : [])),
+    projects: Array.isArray(parsed.projects) ? parsed.projects.filter(project => !legacyDemoProjectIds.has(project.id)) : [],
+    goals: usesLegacyGenericGoals ? { ...ccee114GraduationGoals, semestersLeft: restoredGoals.semestersLeft } : restoredGoals,
+    system: "4.3",
+    careerPath: careerProfiles.some(profile => profile.id === parsed.careerPath) ? parsed.careerPath as CareerPath : "frontend",
+    preferences: {
+      workload: parsed.preferences?.workload === "light" || parsed.preferences?.workload === "ambitious" ? parsed.preferences.workload : defaultRecommendationPreferences.workload,
+      category: parsed.preferences?.category === "required" || parsed.preferences?.category === "elective" || parsed.preferences?.category === "general" ? parsed.preferences.category : defaultRecommendationPreferences.category,
+      projectStyle: parsed.preferences?.projectStyle === "team" || parsed.preferences?.projectStyle === "research" ? parsed.preferences.projectStyle : defaultRecommendationPreferences.projectStyle,
+    },
+    plannedCourses: Array.isArray(parsed.plannedCourses) ? parsed.plannedCourses.filter((course): course is PlannedCourse => Boolean(course && typeof course.name === "string" && typeof course.term === "string" && Number.isFinite(course.credits) && (course.category === "required" || course.category === "elective" || course.category === "general" || course.category === "common" || course.category === "undeclared-required") && (course.priority === "must" || course.priority === "important" || course.priority === "explore"))) : [],
+    termRanks: normalizeTermRanks(parsed.termRanks),
+    hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
+  };
+}
+
 function loadData(): QuestData {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (!saved) return emptyQuestData;
-    const parsed = JSON.parse(saved) as Partial<QuestData>;
-    const restoredGoals = { ...initialGoals, ...(parsed.goals ?? {}) };
-    const usesLegacyGenericGoals = restoredGoals.total === 128 && restoredGoals.required === 60 && restoredGoals.elective === 42 && restoredGoals.general === 26;
-    return {
-      courses: migrateUndeclaredRequiredCourses(migrateCceeCommonRequiredCourses(Array.isArray(parsed.courses) ? parsed.courses.filter(course => !legacyDemoCourseIds.has(course.id)) : [])),
-      projects: Array.isArray(parsed.projects) ? parsed.projects.filter(project => !legacyDemoProjectIds.has(project.id)) : [],
-      goals: usesLegacyGenericGoals ? { ...ccee114GraduationGoals, semestersLeft: restoredGoals.semestersLeft } : restoredGoals,
-      system: "4.3",
-      careerPath: careerProfiles.some(profile => profile.id === parsed.careerPath) ? parsed.careerPath as CareerPath : "frontend",
-      preferences: {
-        workload: parsed.preferences?.workload === "light" || parsed.preferences?.workload === "ambitious" ? parsed.preferences.workload : defaultRecommendationPreferences.workload,
-        category: parsed.preferences?.category === "required" || parsed.preferences?.category === "elective" || parsed.preferences?.category === "general" ? parsed.preferences.category : defaultRecommendationPreferences.category,
-        projectStyle: parsed.preferences?.projectStyle === "team" || parsed.preferences?.projectStyle === "research" ? parsed.preferences.projectStyle : defaultRecommendationPreferences.projectStyle,
-      },
-      plannedCourses: Array.isArray(parsed.plannedCourses) ? parsed.plannedCourses.filter((course): course is PlannedCourse => Boolean(course && typeof course.name === "string" && typeof course.term === "string" && Number.isFinite(course.credits) && (course.category === "required" || course.category === "elective" || course.category === "general" || course.category === "common" || course.category === "undeclared-required") && (course.priority === "must" || course.priority === "important" || course.priority === "explore"))) : [],
-      termRanks: normalizeTermRanks(parsed.termRanks),
-      hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
-    };
+    return saved ? normalizeQuestData(JSON.parse(saved) as Partial<QuestData>) : emptyQuestData;
   } catch {
     return emptyQuestData;
   }
+}
+
+function hasQuestData(data: QuestData) {
+  return data.courses.length > 0 || data.projects.length > 0 || data.plannedCourses.length > 0 || Object.keys(data.termRanks).length > 0 || data.hasCompletedPlanIntro;
+}
+
+function courseMergeKey(course: Pick<CourseRecord, "term" | "name">) {
+  return `${course.term.trim().toLocaleLowerCase("zh-Hant")}\u0000${course.name.trim().toLocaleLowerCase("zh-Hant")}`;
+}
+
+function mergeQuestData(cloud: QuestData, local: QuestData): QuestData {
+  const localCourses = new Map(local.courses.map(course => [courseMergeKey(course), course]));
+  const cloudCourses = cloud.courses.map(course => ({ ...course, ...localCourses.get(courseMergeKey(course)), note: localCourses.get(courseMergeKey(course))?.note ?? course.note }));
+  const mergedCourses = [...cloudCourses, ...local.courses.filter(course => !cloudCourses.some(existing => courseMergeKey(existing) === courseMergeKey(course)))];
+  const localProjects = new Map(local.projects.map(project => [project.id, project]));
+  const mergedProjects = [...cloud.projects.map(project => ({ ...project, ...localProjects.get(project.id) })), ...local.projects.filter(project => !cloud.projects.some(existing => existing.id === project.id))];
+  const plannedKeys = new Set(cloud.plannedCourses.map(course => courseMergeKey(course)));
+  return {
+    ...cloud,
+    courses: mergedCourses,
+    projects: mergedProjects,
+    plannedCourses: [...cloud.plannedCourses, ...local.plannedCourses.filter(course => !plannedKeys.has(courseMergeKey(course)))],
+    termRanks: { ...cloud.termRanks, ...local.termRanks },
+    goals: hasQuestData(local) ? local.goals : cloud.goals,
+    careerPath: hasQuestData(local) ? local.careerPath : cloud.careerPath,
+    preferences: hasQuestData(local) ? local.preferences : cloud.preferences,
+    hasCompletedPlanIntro: cloud.hasCompletedPlanIntro || local.hasCompletedPlanIntro,
+  };
 }
 
 function downloadTextFile(content: string, fileName: string, mimeType: string) {
@@ -331,10 +361,15 @@ function PrivateQuestContent() {
   const [fragmentImportError, setFragmentImportError] = useState<string | null>(null);
   const [fragmentHash, setFragmentHash] = useState(() => window.location.hash);
   const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [cloudSyncStatus, setCloudSyncStatus] = useState<"loading" | "ready" | "saving" | "offline">("loading");
   const mounted = useRef(false);
   const fragmentImportInFlight = useRef(false);
   const previousAchievementIds = useRef<string[]>([]);
   const backupFileInputRef = useRef<HTMLInputElement>(null);
+  const cloudBootstrapComplete = useRef(false);
+  const cloudRevision = useRef(0);
+  const cloudSaveTimer = useRef<number | null>(null);
+  const latestQuestData = useRef(data);
   const pdfConverter = trpc.transcriptPdf.convert.useMutation({
     onSuccess: (result: { csv: string; summary: string; source: "ai" | "local" }) => {
       setTranscriptText(result.csv);
@@ -349,6 +384,8 @@ function PrivateQuestContent() {
       setTranscriptPreview({ accepted: [], toImport: [], duplicates: [], issues: [{ row: 0, message: error.message || "PDF 轉換失敗，請改用 CSV／TSV 或可選取文字的 PDF。", raw: "PDF" }] });
     },
   });
+  const cloudState = trpc.academicSync.get.useQuery(undefined, { retry: 1, refetchOnWindowFocus: false });
+  const cloudSave = trpc.academicSync.save.useMutation();
 
   const gpa = useMemo(() => calculateGpa(data.courses, data.system), [data.courses, data.system]);
   const numericAverage = useMemo(() => calculateNumericAverage(data.courses), [data.courses]);
@@ -384,7 +421,66 @@ function PrivateQuestContent() {
     unlockedAchievements: unlockedAchievements.length,
   }), [academicSkills, credits.total, data.careerPath, data.courses, data.goals.semestersLeft, data.goals.total, data.projects, data.system, gpa, recommendationPreferences, termGpas, unlockedAchievements.length]);
 
-  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); }, [data]);
+  function scheduleCloudSave(nextData: QuestData, delay = 700) {
+    if (!cloudBootstrapComplete.current) return;
+    if (cloudSaveTimer.current !== null) window.clearTimeout(cloudSaveTimer.current);
+    cloudSaveTimer.current = window.setTimeout(() => {
+      cloudSave.mutate({ baseRevision: cloudRevision.current, payload: nextData }, {
+        onSuccess: result => {
+          if (result.status === "saved") {
+            cloudRevision.current = result.revision;
+            setCloudSyncStatus("ready");
+            return;
+          }
+          if (!result.latest) {
+            setCloudSyncStatus("offline");
+            return;
+          }
+          const merged = mergeQuestData(normalizeQuestData(result.latest.payload), latestQuestData.current);
+          cloudRevision.current = result.latest.revision;
+          latestQuestData.current = merged;
+          setData(merged);
+          setCloudSyncStatus("saving");
+          scheduleCloudSave(merged, 150);
+        },
+        onError: () => setCloudSyncStatus("offline"),
+      });
+    }, delay);
+  }
+
+  useEffect(() => {
+    latestQuestData.current = data;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    if (cloudBootstrapComplete.current) {
+      setCloudSyncStatus("saving");
+      scheduleCloudSave(data);
+    }
+  }, [data]);
+
+  useEffect(() => {
+    if (cloudBootstrapComplete.current) return;
+    if (cloudState.isError) {
+      setCloudSyncStatus("offline");
+      return;
+    }
+    if (!cloudState.data) return;
+    const localData = latestQuestData.current;
+    cloudBootstrapComplete.current = true;
+    if (cloudState.data.status === "empty") {
+      cloudRevision.current = 0;
+      setCloudSyncStatus(hasQuestData(localData) ? "saving" : "ready");
+      if (hasQuestData(localData)) scheduleCloudSave(localData, 0);
+      return;
+    }
+    const cloudData = normalizeQuestData(cloudState.data.payload);
+    const shouldMerge = hasQuestData(localData);
+    const resolved = shouldMerge ? mergeQuestData(cloudData, localData) : cloudData;
+    cloudRevision.current = cloudState.data.revision;
+    latestQuestData.current = resolved;
+    setData(resolved);
+    setCloudSyncStatus(shouldMerge ? "saving" : "ready");
+    if (shouldMerge) scheduleCloudSave(resolved, 0);
+  }, [cloudState.data, cloudState.isError]);
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
@@ -793,8 +889,8 @@ function PrivateQuestContent() {
           </button>
           <div className="flex items-center gap-3 self-end sm:self-auto">
             <div className="hidden text-right sm:block">
-              <p className="pixel-font text-[8px] text-[#93a7cb]">LOCAL SAVE ACTIVE</p>
-              <p className="mt-1 text-xs font-semibold text-[#dce7ff]">資料只儲存在此裝置</p>
+              <p className="pixel-font text-[8px] text-[#93a7cb]">PRIVATE CLOUD SYNC</p>
+              <p className={`mt-1 text-xs font-semibold ${cloudSyncStatus === "offline" ? "text-[#ffe797]" : "text-[#dce7ff]"}`}>{cloudSyncStatus === "loading" ? "正在讀取私人資料" : cloudSyncStatus === "saving" ? "正在同步至本人帳號" : cloudSyncStatus === "offline" ? "暫時離線，資料保留在此裝置" : "已同步至本人帳號"}</p>
             </div>
             <ShieldCheck className="h-8 w-8 text-[#74e2b1]" aria-hidden="true" />
           </div>
@@ -859,7 +955,7 @@ function PrivateQuestContent() {
 }
 
 function PrivateAccessScreen({ title, description, action }: { title: string; description: string; action?: { label: string; onClick: () => void } }) {
-  return <main className="min-h-screen bg-[#0c1730] px-4 py-8 text-[#fff8df] sm:p-10"><div className="mx-auto flex min-h-[80vh] max-w-xl items-center"><section className="pixel-panel w-full border-2 border-[#f4c659] bg-[#172640] p-6 shadow-[6px_6px_0_#071024] sm:p-8"><div className="flex h-14 w-14 items-center justify-center border-2 border-[#f4c659] bg-[#394d70] text-[#f4c659]"><ShieldCheck size={30} /></div><p className="pixel-font mt-5 text-[9px] tracking-wider text-[#f4c659]">PRIVATE CAMPUS QUEST</p><h1 className="mt-3 text-2xl font-black leading-tight text-[#fff8df]">{title}</h1><p className="mt-4 text-sm leading-7 text-[#c9d7ee]">{description}</p><p className="mt-4 border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d6f7e6]">成績、課程規劃與專題仍只保存在登入後的這台裝置本機；網站不會把它們公開給其他帳號。</p>{action && <button onClick={action.onClick} className="mt-6 inline-flex items-center gap-2 border-2 border-[#f4c659] bg-[#f4c659] px-4 py-3 text-sm font-black text-[#172440] shadow-[3px_3px_0_#071024] transition hover:bg-[#ffe797] active:scale-[.97]"><ShieldCheck size={17} />{action.label}</button>}</section></div></main>;
+  return <main className="min-h-screen bg-[#0c1730] px-4 py-8 text-[#fff8df] sm:p-10"><div className="mx-auto flex min-h-[80vh] max-w-xl items-center"><section className="pixel-panel w-full border-2 border-[#f4c659] bg-[#172640] p-6 shadow-[6px_6px_0_#071024] sm:p-8"><div className="flex h-14 w-14 items-center justify-center border-2 border-[#f4c659] bg-[#394d70] text-[#f4c659]"><ShieldCheck size={30} /></div><p className="pixel-font mt-5 text-[9px] tracking-wider text-[#f4c659]">PRIVATE CAMPUS QUEST</p><h1 className="mt-3 text-2xl font-black leading-tight text-[#fff8df]">{title}</h1><p className="mt-4 text-sm leading-7 text-[#c9d7ee]">{description}</p><p className="mt-4 border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d6f7e6]">成績、課程規劃與專題只會在本人帳號通過驗證後安全同步；網站不會向其他帳號公開或提供讀寫權限。</p>{action && <button onClick={action.onClick} className="mt-6 inline-flex items-center gap-2 border-2 border-[#f4c659] bg-[#f4c659] px-4 py-3 text-sm font-black text-[#172440] shadow-[3px_3px_0_#071024] transition hover:bg-[#ffe797] active:scale-[.97]"><ShieldCheck size={17} />{action.label}</button>}</section></div></main>;
 }
 
 export default function Home() {
