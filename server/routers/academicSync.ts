@@ -5,6 +5,17 @@ import { adminProcedure, router } from "../_core/trpc";
 const courseCategory = z.enum(["required", "elective", "general", "common", "undeclared-required"]);
 const letterGrade = z.enum(["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "D+", "D", "F"]);
 const recognition = z.enum(["standard", "approved-external", "pending", "gpa-only"]);
+const workspaceTaskStatus = z.enum(["needs-review", "not-started", "active", "done", "deferred", "blocked"]);
+const workspaceProjectStatus = z.enum(["planning", "active", "done", "paused"]);
+const workspaceMemberSchema = z.object({ id: z.string().min(1).max(120), name: z.string().min(1).max(160), role: z.string().min(1).max(160) });
+const workspaceTaskSchema = z.object({
+  id: z.string().min(1).max(160), title: z.string().min(1).max(240), description: z.string().max(10_000), phase: z.string().max(160), scheduleLabel: z.string().max(160), assigneeIds: z.array(z.string().max(120)).max(30), status: workspaceTaskStatus,
+  estimatedMinutes: z.number().int().min(0).max(100_000).optional(), extensionMinutes: z.number().int().min(0).max(100_000).optional(), actualMinutes: z.number().int().min(0).max(100_000).optional(), note: z.string().max(5_000).optional(),
+});
+const workspaceProjectSchema = z.object({
+  id: z.string().min(1).max(160), name: z.string().min(1).max(240), description: z.string().max(20_000), status: workspaceProjectStatus,
+  source: z.object({ provider: z.literal("notion"), url: z.string().url().max(2_000), label: z.string().max(300), importedAt: z.string().max(40) }), tags: z.array(z.string().max(80)).max(40), members: z.array(workspaceMemberSchema).max(50), tasks: z.array(workspaceTaskSchema).max(1_000),
+});
 
 export const academicSyncPayloadSchema = z.object({
   courses: z.array(z.object({
@@ -23,6 +34,7 @@ export const academicSyncPayloadSchema = z.object({
   plannedCourses: z.array(z.object({ id: z.string().min(1).max(200), term: z.string().max(80), name: z.string().max(240), credits: z.number().finite().min(0).max(30), category: courseCategory, priority: z.enum(["must", "important", "explore"]) })).max(500),
   termRanks: z.record(z.string().max(80), z.object({ rank: z.number().int().min(1).max(100_000), cohortSize: z.number().int().min(1).max(100_000) })).default({}),
   hasCompletedPlanIntro: z.boolean(),
+  workspaces: z.array(workspaceProjectSchema).max(50).default([]),
 });
 
 function parsePayload(payload: string) {

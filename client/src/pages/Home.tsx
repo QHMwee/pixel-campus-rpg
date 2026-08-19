@@ -32,6 +32,7 @@ import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
 import { createLocalBackup, parseLocalBackup } from "@shared/localBackup";
+import { createMedievalGuildWorkspaceProject, isWorkspaceProject, type WorkspaceProject, type WorkspaceTaskStatus, workspaceTaskStatusLabel } from "@shared/projectWorkspace";
 import { ccee114CourseMap, ccee114RequirementDefinitions, getCcee114PrerequisiteAlerts, getCcee114RequirementProgress, type Ccee114CourseEntry, type Ccee114CourseGroup } from "@shared/ccee114";
 import {
   buildCareerRecommendations,
@@ -116,6 +117,7 @@ type QuestData = {
   plannedCourses: PlannedCourse[];
   termRanks: Record<string, TermRank>;
   hasCompletedPlanIntro: boolean;
+  workspaces: WorkspaceProject[];
 };
 
 type AiPlanningSection = Exclude<View, "plan">;
@@ -149,6 +151,7 @@ const emptyQuestData: QuestData = {
   plannedCourses: [],
   termRanks: {},
   hasCompletedPlanIntro: false,
+  workspaces: [],
 };
 
 const categoryLabel: Record<CourseCategory, string> = { required: "電通系必修", elective: "專業選修", common: "校內共同必修", general: "通識", "undeclared-required": "不分系必修" };
@@ -189,6 +192,7 @@ function normalizeQuestData(parsed: Partial<QuestData>): QuestData {
     plannedCourses: Array.isArray(parsed.plannedCourses) ? parsed.plannedCourses.filter((course): course is PlannedCourse => Boolean(course && typeof course.name === "string" && typeof course.term === "string" && Number.isFinite(course.credits) && (course.category === "required" || course.category === "elective" || course.category === "general" || course.category === "common" || course.category === "undeclared-required") && (course.priority === "must" || course.priority === "important" || course.priority === "explore"))) : [],
     termRanks: normalizeTermRanks(parsed.termRanks),
     hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
+    workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter(isWorkspaceProject) : [],
   };
 }
 
@@ -215,6 +219,8 @@ function mergeQuestData(cloud: QuestData, local: QuestData): QuestData {
   const mergedCourses = [...cloudCourses, ...local.courses.filter(course => !cloudCourses.some(existing => courseMergeKey(existing) === courseMergeKey(course)))];
   const localProjects = new Map(local.projects.map(project => [project.id, project]));
   const mergedProjects = [...cloud.projects.map(project => ({ ...project, ...localProjects.get(project.id) })), ...local.projects.filter(project => !cloud.projects.some(existing => existing.id === project.id))];
+  const localWorkspaces = new Map(local.workspaces.map(project => [project.id, project]));
+  const mergedWorkspaces = [...cloud.workspaces.map(project => localWorkspaces.get(project.id) ?? project), ...local.workspaces.filter(project => !cloud.workspaces.some(existing => existing.id === project.id))];
   const plannedKeys = new Set(cloud.plannedCourses.map(course => courseMergeKey(course)));
   return {
     ...cloud,
@@ -222,6 +228,7 @@ function mergeQuestData(cloud: QuestData, local: QuestData): QuestData {
     projects: mergedProjects,
     plannedCourses: [...cloud.plannedCourses, ...local.plannedCourses.filter(course => !plannedKeys.has(courseMergeKey(course)))],
     termRanks: { ...cloud.termRanks, ...local.termRanks },
+    workspaces: mergedWorkspaces,
     goals: hasQuestData(local) ? local.goals : cloud.goals,
     careerPath: hasQuestData(local) ? local.careerPath : cloud.careerPath,
     preferences: hasQuestData(local) ? local.preferences : cloud.preferences,
@@ -481,6 +488,14 @@ function PrivateQuestContent() {
     setCloudSyncStatus(shouldMerge ? "saving" : "ready");
     if (shouldMerge) scheduleCloudSave(resolved, 0);
   }, [cloudState.data, cloudState.isError]);
+
+  useEffect(() => {
+    if (!cloudBootstrapComplete.current || !["ready", "saving"].includes(cloudSyncStatus)) return;
+    setData(current => current.workspaces.some(project => project.id === "notion-medieval-guild-scheduler")
+      ? current
+      : { ...current, workspaces: [...current.workspaces, createMedievalGuildWorkspaceProject()] });
+  }, [cloudSyncStatus]);
+
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash;
@@ -777,6 +792,10 @@ function PrivateQuestContent() {
     setEditingProjectId(null);
   }
 
+  function updateWorkspace(projectId: string, update: (project: WorkspaceProject) => WorkspaceProject) {
+    setData(current => ({ ...current, workspaces: current.workspaces.map(project => project.id === projectId ? update(project) : project) }));
+  }
+
   function openCourseEditor(course?: CourseRecord) {
     setEditingCourseId(course?.id ?? null);
     setCourseForm(course ? createCourseEditorDraft(course) : emptyCourse());
@@ -939,7 +958,7 @@ function PrivateQuestContent() {
             })} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} fragmentImportError={fragmentImportError} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /><CareerRealityPanel recommendations={recommendations} /></>}
-            {activeView === "projects" && <ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} />}
+            {activeView === "projects" && <><ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} /><NotionProjectWorkspace workspaces={data.workspaces} onUpdate={updateWorkspace} /></>}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
             <AiPlannerPanel section={activeView === "plan" ? "dashboard" : activeView} snapshot={aiSnapshot} />
           </div>
@@ -1156,6 +1175,24 @@ function CareerQuestView({ recommendations, careerPath, onCareerPathChange, goal
 
 function ProjectsView({ projects, projectForm, editingProjectId, setProjectForm, onOpen, onSave, onCancel, onDelete }: { projects: ProjectRecord[]; projectForm: Omit<ProjectRecord, "id"> | null; editingProjectId: string | null; setProjectForm: React.Dispatch<React.SetStateAction<Omit<ProjectRecord, "id"> | null>>; onOpen: (project?: ProjectRecord) => void; onSave: () => void; onCancel: () => void; onDelete: (id: string) => void }) {
   return <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_400px] animate-pop-in"><Panel className="overflow-hidden"><PanelTitle eyebrow="PROJECT WORKSHOP" title="專題工坊" action={<PixelButton onClick={() => onOpen()} className="bg-[#f4c659] text-[#152544]"><Plus size={17} /> 新增專題</PixelButton>} /><div className="p-5">{projects.length === 0 ? <EmptyState icon={<FolderKanban />} title="工坊尚未開張" detail="新增第一個專題，將構想與成果變成冒險紀錄。" action={() => onOpen()} /> : <div className="grid gap-4 md:grid-cols-2">{[...projects].sort((a,b) => b.startDate.localeCompare(a.startDate)).map(project => <article key={project.id} className="border-3 border-[#536994] bg-[#172640] shadow-[3px_3px_0_#080d1f]"><div className="flex items-start justify-between gap-3 border-b-2 border-[#435a82] p-4"><div><span className={`inline-flex px-2 py-1 text-xs font-black text-white ${statusTone[project.status]}`}>{statusLabel[project.status]}</span><h3 className="mt-3 text-lg font-black text-[#fff8df]">{project.name}</h3></div><div className="flex gap-1"><button onClick={() => onOpen(project)} className="p-1.5 text-[#b9c9e6] hover:text-[#f4c659]" aria-label={`編輯 ${project.name}`}><Pencil size={16} /></button><button onClick={() => window.confirm(`確定刪除「${project.name}」嗎？`) && onDelete(project.id)} className="p-1.5 text-[#b9c9e6] hover:text-[#f28682]" aria-label={`刪除 ${project.name}`}><Trash2 size={16} /></button></div></div><div className="p-4"><p className="min-h-14 text-sm leading-7 text-[#c0d0e9]">{project.description || "尚未填寫專題描述。"}</p><div className="mt-4 flex flex-wrap gap-2">{project.tags.length ? project.tags.map(tag => <span key={tag} className="border border-[#63799f] bg-[#263a5d] px-2 py-1 text-xs font-bold text-[#cde0ff]">#{tag}</span>) : <span className="text-xs text-[#91a5c7]">尚未設定技術標籤</span>}</div><p className="mt-4 border-t-2 border-[#3e557d] pt-3 text-xs font-bold text-[#a9bad8]">{project.startDate || "未設定"} <span className="mx-1 text-[#f4c659]">→</span> {project.endDate || "未設定"}</p></div></article>)}</div>}</div></Panel><ProjectEditor form={projectForm} editing={Boolean(editingProjectId)} setForm={setProjectForm} onSave={onSave} onCancel={onCancel} /></div>;
+}
+
+function NotionProjectWorkspace({ workspaces, onUpdate }: { workspaces: WorkspaceProject[]; onUpdate: (projectId: string, update: (project: WorkspaceProject) => WorkspaceProject) => void }) {
+  if (!workspaces.length) return null;
+  const taskStatusTone: Record<WorkspaceTaskStatus, string> = { "needs-review": "bg-[#5c4c26] text-[#ffe797]", "not-started": "bg-[#40577f] text-[#d7e5ff]", active: "bg-[#5648b8] text-[#eeeaff]", done: "bg-[#23634f] text-[#d8ffe9]", deferred: "bg-[#684c83] text-[#f0dcff]", blocked: "bg-[#7a3740] text-[#ffe0df]" };
+  return <Panel className="mt-4 overflow-hidden" gold>
+    <PanelTitle eyebrow="NOTION PROJECT IMPORT" title="Notion 專案工作區" action={<button onClick={() => window.open(workspaces[0].source.url, "_blank", "noopener,noreferrer")} className="border-2 border-[#647aa2] bg-[#263b5d] px-3 py-2 text-xs font-black text-[#dce9ff] hover:border-[#f4c659] hover:text-[#fff0ba]">開啟 Notion 原始計畫</button>} />
+    <div className="space-y-5 p-5">
+      <p className="border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d5f9e6]">已匯入 Notion 的中世紀公會排程 App 規劃與每日開發項目。原始資料沒有提供明確完成狀態，因此首次匯入一律標為「待確認」；你在這裡更新的內容會同步到你的私人 Campus Quest 資料。</p>
+      {workspaces.map(project => {
+        const completed = project.tasks.filter(task => task.status === "done").length;
+        return <section key={project.id} className="border-3 border-[#536994] bg-[#14233e] shadow-[3px_3px_0_#080d1f]">
+          <div className="border-b-2 border-[#40567e] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="pixel-font text-[8px] text-[#f4c659]">PROJECT COMMAND BOARD</p><h3 className="mt-2 text-xl font-black text-[#fff8df]">{project.name}</h3><p className="mt-2 max-w-3xl text-sm leading-6 text-[#c1d1ea]">{project.description}</p></div><div className="border-2 border-[#6a82ad] bg-[#1c3154] px-3 py-2 text-right"><p className="pixel-font text-[8px] text-[#a9bbdd]">TASK PROGRESS</p><p className="mt-1 text-lg font-black text-[#f4c659]">{completed} <span className="text-xs text-[#b9cae4]">/ {project.tasks.length}</span></p></div></div><div className="mt-4 flex flex-wrap gap-2">{project.tags.map(tag => <span key={tag} className="border border-[#6079a4] bg-[#243a5e] px-2 py-1 text-xs font-bold text-[#d9e7ff]">#{tag}</span>)}</div></div>
+          <div className="grid gap-5 p-4 xl:grid-cols-[280px_minmax(0,1fr)]"><aside className="space-y-3"><div><p className="pixel-font text-[8px] text-[#93a7cb]">PROJECT MEMBERS</p><p className="mt-2 text-xs leading-5 text-[#b6c7e4]">可將「待指定」改為實際人員名稱，後續任務會依指派顯示。</p></div>{project.members.map(member => <div key={member.id} className="border-2 border-[#496189] bg-[#1a2c4b] p-3"><input value={member.name} onChange={event => onUpdate(project.id, current => ({ ...current, members: current.members.map(item => item.id === member.id ? { ...item, name: event.target.value } : item) }))} aria-label={`${member.role} 姓名`} className="pixel-input w-full px-2 py-2 text-sm" /><p className="mt-2 text-xs font-bold text-[#f4c659]">{member.role}</p></div>)}</aside><div><div className="flex items-end justify-between gap-3"><div><p className="pixel-font text-[8px] text-[#93a7cb]">SCHEDULE & WORK ITEMS</p><p className="mt-1 text-xs text-[#b7c8e4]">直接更新狀態、時程、工時與調整原因；不會回寫或覆蓋 Notion 的歷史頁面。</p></div></div><div className="mt-3 space-y-3">{project.tasks.map(task => <details key={task.id} className="border-2 border-[#455e89] bg-[#172844]" open={task.status === "active" || task.status === "needs-review"}><summary className="cursor-pointer list-none p-3"><div className="flex flex-wrap items-center gap-2"><span className={`px-2 py-1 text-[11px] font-black ${taskStatusTone[task.status]}`}>{workspaceTaskStatusLabel[task.status]}</span><span className="font-black text-[#fff8df]">{task.title}</span><span className="ml-auto text-xs font-bold text-[#9eb1d2]">{task.scheduleLabel || "未排程"}</span></div><p className="mt-2 text-xs leading-5 text-[#b7c8e4]">{task.description}</p></summary><div className="grid gap-3 border-t-2 border-[#3e5680] p-3 md:grid-cols-2"><Field label="工作狀態"><select value={task.status} onChange={event => onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, status: event.target.value as WorkspaceTaskStatus } : item) }))} className="pixel-input w-full px-3 py-2">{Object.entries(workspaceTaskStatusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="時程／原始日期"><input value={task.scheduleLabel} onChange={event => onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, scheduleLabel: event.target.value } : item) }))} placeholder="例如：8/23 或 2026-09-01" className="pixel-input w-full px-3 py-2" /></Field><Field label="負責人"><select multiple value={task.assigneeIds} onChange={event => { const assigneeIds = Array.from(event.currentTarget.selectedOptions, option => option.value); onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, assigneeIds } : item) })); }} className="pixel-input min-h-24 w-full px-3 py-2">{project.members.map(member => <option key={member.id} value={member.id}>{member.name}｜{member.role}</option>)}</select></Field><Field label="階段"><input value={task.phase} onChange={event => onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, phase: event.target.value } : item) }))} className="pixel-input w-full px-3 py-2" /></Field><div className="grid grid-cols-3 gap-2 md:col-span-2"><Field label="預估（分）"><input type="number" min="0" value={task.estimatedMinutes ?? ""} onChange={event => onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, estimatedMinutes: event.target.value ? Number(event.target.value) : undefined } : item) }))} className="pixel-input w-full px-2 py-2" /></Field><Field label="延長（分）"><input type="number" min="0" value={task.extensionMinutes ?? ""} onChange={event => onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, extensionMinutes: event.target.value ? Number(event.target.value) : undefined } : item) }))} className="pixel-input w-full px-2 py-2" /></Field><Field label="實際（分）"><input type="number" min="0" value={task.actualMinutes ?? ""} onChange={event => onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, actualMinutes: event.target.value ? Number(event.target.value) : undefined } : item) }))} className="pixel-input w-full px-2 py-2" /></Field></div><Field label="調整說明／阻塞原因"><textarea value={task.note ?? ""} onChange={event => onUpdate(project.id, current => ({ ...current, tasks: current.tasks.map(item => item.id === task.id ? { ...item, note: event.target.value || undefined } : item) }))} rows={2} placeholder="記錄延長原因、依賴項目或下一步…" className="pixel-input w-full resize-y px-3 py-2 md:col-span-2" /></Field></div></details>)}</div></div></div>
+        </section>;
+      })}
+    </div>
+  </Panel>;
 }
 
 function ProjectEditor({ form, editing, setForm, onSave, onCancel }: { form: Omit<ProjectRecord, "id"> | null; editing: boolean; setForm: React.Dispatch<React.SetStateAction<Omit<ProjectRecord, "id"> | null>>; onSave: () => void; onCancel: () => void }) {

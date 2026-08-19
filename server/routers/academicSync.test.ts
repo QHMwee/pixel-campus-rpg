@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrpcContext } from "../_core/context";
+import { createMedievalGuildWorkspaceProject } from "../../shared/projectWorkspace";
 import { academicSyncPayloadSchema, academicSyncRouter } from "./academicSync";
 
 const payload = {
@@ -10,6 +11,12 @@ const payload = {
 describe("academicSync private contract", () => {
   it("accepts a bounded Campus Quest 4.3 payload", () => {
     expect(academicSyncPayloadSchema.parse(payload)).toMatchObject({ system: "4.3", goals: { total: 128 } });
+  });
+
+  it("accepts an imported Notion project workspace for private sync", () => {
+    const parsed = academicSyncPayloadSchema.parse({ ...payload, workspaces: [createMedievalGuildWorkspaceProject()] });
+    expect(parsed.workspaces[0]?.tasks.length).toBeGreaterThan(20);
+    expect(parsed.workspaces[0]?.source.provider).toBe("notion");
   });
 
   it("rejects data outside the private academic contract", () => {
