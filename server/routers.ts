@@ -5,6 +5,7 @@ import { adminProcedure, publicProcedure, router } from "./_core/trpc";
 import { aiPlannerRouter } from "./routers/aiPlanner";
 import { academicSyncRouter } from "./routers/academicSync";
 import { achievementMediaRouter } from "./routers/achievementMedia";
+import { notionSyncRouter } from "./routers/notionSync";
 import { transcriptPdfRouter } from "./routers/transcriptPdf";
 
 export const appRouter = router({
@@ -13,6 +14,7 @@ export const appRouter = router({
   aiPlanner: aiPlannerRouter,
   academicSync: academicSyncRouter,
   achievementMedia: achievementMediaRouter,
+  notionSync: notionSyncRouter,
   transcriptPdf: transcriptPdfRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),

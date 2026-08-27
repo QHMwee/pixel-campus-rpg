@@ -35,6 +35,7 @@ import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
 import { createLocalBackup, parseLocalBackup } from "@shared/localBackup";
+import { NOTION_EXAM_SYNC_LEDGER_URL } from "@shared/notionExamSync";
 import { achievementRecordKindLabel, achievementRecordStatusLabel, isAchievementRecord, type AchievementEvidence, type AchievementMediaKind, type AchievementRecord, type AchievementRecordKind, type AchievementRecordStatus } from "@shared/achievementRecords";
 import { createExamWorkspaces, examResourceKindLabel, getExamCountdown, getExamTasksForDate, normalizeExamWorkspace, updateExamDailyLog, type ExamDailyLog, type ExamResourceKind, type ExamWorkspace } from "@shared/examWorkspace";
 import { createMedievalGuildWorkspaceProject, isWorkspaceProject, type WorkspaceProject, type WorkspaceTaskStatus, workspaceTaskStatusLabel } from "@shared/projectWorkspace";
@@ -388,6 +389,7 @@ function PrivateQuestContent() {
   const [fragmentHash, setFragmentHash] = useState(() => window.location.hash);
   const [backupNotice, setBackupNotice] = useState<string | null>(null);
   const [achievementNotice, setAchievementNotice] = useState<string | null>(null);
+  const [examSyncNotice, setExamSyncNotice] = useState<string | null>(null);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<"loading" | "ready" | "saving" | "offline">("loading");
   const mounted = useRef(false);
   const fragmentImportInFlight = useRef(false);
@@ -414,6 +416,10 @@ function PrivateQuestContent() {
   const cloudState = trpc.academicSync.get.useQuery(undefined, { retry: 1, refetchOnWindowFocus: false });
   const cloudSave = trpc.academicSync.save.useMutation();
   const achievementMediaUpload = trpc.achievementMedia.upload.useMutation();
+  const examNotionSync = trpc.notionSync.appendExamSnapshot.useMutation({
+    onSuccess: result => setExamSyncNotice(result.status === "synced" ? "已將目前考試快照追加到 Notion 同步紀錄頁。" : result.status === "duplicate" ? "這份考試資料已同步過，Notion 不會新增重複紀錄。" : "相同快照正在同步中，請稍候再查看 Notion 紀錄頁。"),
+    onError: error => setExamSyncNotice(error.message || "Notion 同步暫時失敗；你的網站資料沒有被刪除，請稍後重試。"),
+  });
 
   const gpa = useMemo(() => calculateGpa(data.courses, data.system), [data.courses, data.system]);
   const numericAverage = useMemo(() => calculateNumericAverage(data.courses), [data.courses]);
@@ -1024,7 +1030,7 @@ function PrivateQuestContent() {
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /><CareerRealityPanel recommendations={recommendations} /></>}
             {activeView === "projects" && <><ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} /><NotionProjectWorkspace workspaces={data.workspaces} onUpdate={updateWorkspace} /></>}
-            {activeView === "exams" && <ExamWorkspaceView workspaces={data.examWorkspaces} onUpdate={updateExamWorkspace} />}
+            {activeView === "exams" && <ExamWorkspaceView workspaces={data.examWorkspaces} onUpdate={updateExamWorkspace} syncing={examNotionSync.isPending} syncNotice={examSyncNotice} canSync={cloudSyncStatus === "ready"} onSync={() => { if (cloudSyncStatus !== "ready") { setExamSyncNotice("請先等待網站完成私人雲端同步，再追加到 Notion。"); return; } setExamSyncNotice(null); examNotionSync.mutate({ examWorkspaces: data.examWorkspaces }); }} />}
             {activeView === "achievements" && <AchievementRecordsView records={data.achievementRecords} academicSkills={academicSkills.map(skill => skill.name)} notice={achievementNotice} uploading={achievementMediaUpload.isPending} onAdd={addAchievementRecord} onUpdate={updateAchievementRecord} onDelete={id => setData(current => ({ ...current, achievementRecords: current.achievementRecords.filter(record => record.id !== id) }))} onUpload={uploadAchievementEvidence} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
             <AiPlannerPanel section={activeView === "plan" || activeView === "achievements" || activeView === "exams" ? "dashboard" : activeView as AiPlanningSection} snapshot={aiSnapshot} />
@@ -1341,7 +1347,7 @@ function ExamCountdownSidebar({ workspaces, onOpen }: { workspaces: ExamWorkspac
 type ExamResourceDraft = { title: string; kind: ExamResourceKind; url: string; note: string };
 type ExamTaskDraft = { date: string; title: string; detail: string; plannedMinutes: string };
 
-function ExamWorkspaceView({ workspaces, onUpdate }: { workspaces: ExamWorkspace[]; onUpdate: (workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) => void }) {
+function ExamWorkspaceView({ workspaces, onUpdate, syncing, syncNotice, canSync, onSync }: { workspaces: ExamWorkspace[]; onUpdate: (workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) => void; syncing: boolean; syncNotice: string | null; canSync: boolean; onSync: () => void }) {
   const [activeDate, setActiveDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -1354,7 +1360,7 @@ function ExamWorkspaceView({ workspaces, onUpdate }: { workspaces: ExamWorkspace
   }
 
   if (!workspaces.length) return <Panel gold className="overflow-hidden"><PanelTitle eyebrow="EXAM PREP" title="考試準備工作區" /><div className="p-5"><EmptyState icon={<Clock3 />} title="正在建立考試工作區" detail="完成私人雲端資料讀取後，會顯示已匯入的多益與 CPE 計畫。" /></div></Panel>;
-  return <div className="space-y-4 animate-pop-in"><Panel gold className="overflow-hidden"><PanelTitle eyebrow="EXAM PREPARATION QUESTS" title="證照考試準備基地" action={<Clock3 className="text-[#f4c659]" />} /><div className="p-5"><p className="border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d5f9e6]">多益與 CPE 計畫已從 Notion 單向匯入。這裡的勾選、讀書時間、筆記、日期與準備資料只會同步至你的私人 Campus Quest，不會回寫或改動原始 Notion 頁面。</p></div></Panel>{workspaces.map(workspace => <ExamWorkspaceCard key={workspace.id} workspace={workspace} activeDate={activeDate} now={now} onActiveDateChange={setActiveDate} onUpdate={onUpdate} onUpdateDailyLog={updateDailyLog} />)}</div>;
+  return <div className="space-y-4 animate-pop-in"><Panel gold className="overflow-hidden"><PanelTitle eyebrow="EXAM PREPARATION QUESTS" title="證照考試準備基地" action={<div className="flex flex-wrap justify-end gap-2"><button onClick={() => window.open(NOTION_EXAM_SYNC_LEDGER_URL, "_blank", "noopener,noreferrer")} className="flex items-center gap-1 border-2 border-[#647aa2] bg-[#263b5d] px-3 py-2 text-xs font-black text-[#dce9ff] hover:border-[#f4c659] hover:text-[#fff0ba]"><ExternalLink size={14} /> 同步紀錄</button><PixelButton onClick={onSync} disabled={syncing || !canSync} className="bg-[#245d58] text-[#e1fff6]"><BookMarked size={16} /> {syncing ? "正在追加至 Notion" : "同步至 Notion"}</PixelButton></div>} /><div className="p-5"><p className="border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d5f9e6]">多益與 CPE 計畫已從 Notion 單向匯入。按下「同步至 Notion」只會把目前網站快照追加到獨立的同步紀錄頁，不會覆寫或改動原始計畫與資料庫。</p>{syncNotice && <p className="mt-3 border-l-4 border-[#f4c659] bg-[#493d24] px-3 py-2 text-xs leading-6 text-[#fff0b9]">{syncNotice}</p>}</div></Panel>{workspaces.map(workspace => <ExamWorkspaceCard key={workspace.id} workspace={workspace} activeDate={activeDate} now={now} onActiveDateChange={setActiveDate} onUpdate={onUpdate} onUpdateDailyLog={updateDailyLog} />)}</div>;
 }
 
 function ExamWorkspaceCard({ workspace, activeDate, now, onActiveDateChange, onUpdate, onUpdateDailyLog }: { workspace: ExamWorkspace; activeDate: string; now: Date; onActiveDateChange: (date: string) => void; onUpdate: (workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) => void; onUpdateDailyLog: (workspace: ExamWorkspace, patch: (current: ExamDailyLog) => ExamDailyLog, taskId?: string, checked?: boolean) => void }) {

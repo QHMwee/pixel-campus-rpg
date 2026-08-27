@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { academicSyncStates, InsertUser, privateAchievementMedia, users } from "../drizzle/schema";
+import { academicSyncStates, InsertUser, notionSyncEvents, privateAchievementMedia, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -140,6 +140,37 @@ export async function getPrivateAchievementMedia(ownerId: number, id: string) {
   if (!db) throw new Error("私人附件資料庫暫時無法使用。");
   const rows = await db.select().from(privateAchievementMedia)
     .where(and(eq(privateAchievementMedia.ownerId, ownerId), eq(privateAchievementMedia.id, id))).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getNotionSyncEvent(ownerId: number, fingerprint: string) {
+  const db = await getDb();
+  if (!db) throw new Error("私人同步資料庫暫時無法使用。");
+  const rows = await db.select().from(notionSyncEvents)
+    .where(and(eq(notionSyncEvents.ownerId, ownerId), eq(notionSyncEvents.fingerprint, fingerprint))).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createNotionSyncEvent(input: { ownerId: number; fingerprint: string; status: "pending"; pageUrl: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("私人同步資料庫暫時無法使用。");
+  try {
+    const result = await db.insert(notionSyncEvents).values(input);
+    const id = Number(result[0].insertId);
+    const rows = await db.select().from(notionSyncEvents).where(eq(notionSyncEvents.id, id)).limit(1);
+    return rows[0] ?? null;
+  } catch (error) {
+    const duplicate = error instanceof Error && /duplicate|unique/i.test(error.message);
+    if (duplicate) return null;
+    throw error;
+  }
+}
+
+export async function updateNotionSyncEventStatus(id: number, status: "pending" | "synced" | "failed") {
+  const db = await getDb();
+  if (!db) throw new Error("私人同步資料庫暫時無法使用。");
+  await db.update(notionSyncEvents).set({ status, updatedAt: new Date() }).where(eq(notionSyncEvents.id, id));
+  const rows = await db.select().from(notionSyncEvents).where(eq(notionSyncEvents.id, id)).limit(1);
   return rows[0] ?? null;
 }
 

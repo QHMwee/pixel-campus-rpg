@@ -46,9 +46,24 @@ export const privateAchievementMedia = mysqlTable("private_achievement_media", {
   index("private_achievement_media_owner_idx").on(table.ownerId),
 ]);
 
+/** Append-only Notion sync attempts. The content itself remains in the private Notion ledger page. */
+export const notionSyncEvents = mysqlTable("notion_sync_events", {
+  id: int("id").autoincrement().primaryKey(),
+  ownerId: int("ownerId").notNull(),
+  fingerprint: varchar("fingerprint", { length: 120 }).notNull(),
+  status: mysqlEnum("status", ["pending", "synced", "failed"]).notNull().default("pending"),
+  pageUrl: varchar("pageUrl", { length: 2_000 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, table => [
+  uniqueIndex("notion_sync_events_owner_fingerprint_unique").on(table.ownerId, table.fingerprint),
+  index("notion_sync_events_owner_idx").on(table.ownerId),
+]);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type AcademicSyncState = typeof academicSyncStates.$inferSelect;
 export type PrivateAchievementMedia = typeof privateAchievementMedia.$inferSelect;
+export type NotionSyncEvent = typeof notionSyncEvents.$inferSelect;
 
 // TODO: Add your tables here
