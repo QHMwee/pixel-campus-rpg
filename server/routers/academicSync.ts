@@ -10,6 +10,9 @@ const workspaceProjectStatus = z.enum(["planning", "active", "done", "paused"]);
 const achievementRecordKind = z.enum(["certificate", "competition"]);
 const achievementRecordStatus = z.enum(["planning", "in-progress", "earned", "completed"]);
 const achievementMediaKind = z.enum(["image", "video", "link"]);
+const examWorkspaceCode = z.enum(["toeic", "cpe"]);
+const examTaskStatus = z.enum(["needs-review", "not-started", "done"]);
+const examResourceKind = z.enum(["vocabulary", "practice", "notes", "mock", "link", "document", "other"]);
 const workspaceMemberSchema = z.object({ id: z.string().min(1).max(120), name: z.string().min(1).max(160), role: z.string().min(1).max(160) });
 const dailyProjectLogSchema = z.object({
   id: z.string().min(1).max(160), date: z.string().min(1).max(40), completedTaskIds: z.array(z.string().max(160)).max(1_000),
@@ -31,6 +34,24 @@ const achievementRecordSchema = z.object({
   id: z.string().min(1).max(160), kind: achievementRecordKind, title: z.string().min(1).max(300), organizer: z.string().max(300).optional(), status: achievementRecordStatus,
   targetDate: z.string().max(40).optional(), achievedDate: z.string().max(40).optional(), description: z.string().max(10_000).optional(), result: z.string().max(5_000).optional(), skills: z.array(z.string().min(1).max(80)).max(50), evidence: z.array(achievementEvidenceSchema).max(100), createdAt: z.string().min(1).max(40), updatedAt: z.string().min(1).max(40),
 });
+const examDailyTaskSchema = z.object({
+  id: z.string().min(1).max(160), date: z.string().min(1).max(40), title: z.string().min(1).max(300), detail: z.string().max(10_000).optional(),
+  phase: z.string().max(300).optional(), resourceLabel: z.string().max(300).optional(), plannedMinutes: z.number().int().min(0).max(100_000).optional(), sourceUrl: z.string().url().max(2_000).optional(), status: examTaskStatus,
+});
+const examDailyLogSchema = z.object({
+  id: z.string().min(1).max(160), date: z.string().min(1).max(40), completedTaskIds: z.array(z.string().max(160)).max(1_000),
+  minutes: z.number().int().min(0).max(100_000).optional(), note: z.string().max(5_000).optional(),
+});
+const examResourceSchema = z.object({
+  id: z.string().min(1).max(160), title: z.string().min(1).max(300), kind: examResourceKind, url: z.string().url().max(2_000).optional(),
+  note: z.string().max(10_000).optional(), sourceRef: z.string().max(2_000).optional(), createdAt: z.string().min(1).max(40),
+});
+const examWorkspaceSchema = z.object({
+  id: z.string().min(1).max(160), code: examWorkspaceCode, name: z.string().min(1).max(300), description: z.string().max(20_000),
+  source: z.object({ provider: z.literal("notion"), url: z.string().url().max(2_000), label: z.string().max(300), importedAt: z.string().max(40) }),
+  examDate: z.string().max(40), examTime: z.string().max(80).optional(), examDayChecklist: z.array(z.string().min(1).max(1_000)).max(100),
+  dailyTasks: z.array(examDailyTaskSchema).max(2_000), dailyLogs: z.array(examDailyLogSchema).max(2_000), resources: z.array(examResourceSchema).max(1_000), notes: z.string().max(20_000).optional(),
+});
 
 export const academicSyncPayloadSchema = z.object({
   courses: z.array(z.object({
@@ -51,6 +72,7 @@ export const academicSyncPayloadSchema = z.object({
   hasCompletedPlanIntro: z.boolean(),
   workspaces: z.array(workspaceProjectSchema).max(50).default([]),
   achievementRecords: z.array(achievementRecordSchema).max(500).default([]),
+  examWorkspaces: z.array(examWorkspaceSchema).max(20).default([]),
 });
 
 function parsePayload(payload: string) {

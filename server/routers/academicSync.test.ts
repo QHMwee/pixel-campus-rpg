@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TrpcContext } from "../_core/context";
 import { createMedievalGuildWorkspaceProject } from "../../shared/projectWorkspace";
+import { createExamWorkspaces } from "../../shared/examWorkspace";
 import { academicSyncPayloadSchema, academicSyncRouter } from "./academicSync";
 
 const payload = {
@@ -31,6 +32,13 @@ describe("academicSync private contract", () => {
     workspace.dailyLogs = [{ id: "log-1", date: "2026-08-20", completedTaskIds: ["daily-0723"], minutes: 90, note: "完成羊皮紙任務卡調整" }];
     const parsed = academicSyncPayloadSchema.parse({ ...payload, workspaces: [workspace] });
     expect(parsed.workspaces[0]?.dailyLogs[0]).toMatchObject({ completedTaskIds: ["daily-0723"], minutes: 90 });
+  });
+
+  it("accepts private TOEIC and CPE workspaces with their editable resources and daily logs", () => {
+    const parsed = academicSyncPayloadSchema.parse({ ...payload, examWorkspaces: createExamWorkspaces() });
+    expect(parsed.examWorkspaces).toHaveLength(2);
+    expect(parsed.examWorkspaces.find(workspace => workspace.code === "toeic")?.examDate).toBe("2026-12-20");
+    expect(parsed.examWorkspaces.find(workspace => workspace.code === "cpe")?.resources.length).toBeGreaterThan(0);
   });
 
   it("rejects data outside the private academic contract", () => {

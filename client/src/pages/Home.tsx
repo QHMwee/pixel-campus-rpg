@@ -1,13 +1,16 @@
 import {
   Award,
   BarChart3,
+  BookMarked,
   BookOpen,
   CalendarPlus,
   ChevronRight,
   CircleHelp,
+  Clock3,
   Compass,
   Crown,
   Download,
+  ExternalLink,
   FolderKanban,
   FileText,
   GraduationCap,
@@ -33,6 +36,7 @@ import { trpc } from "@/lib/trpc";
 import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
 import { createLocalBackup, parseLocalBackup } from "@shared/localBackup";
 import { achievementRecordKindLabel, achievementRecordStatusLabel, isAchievementRecord, type AchievementEvidence, type AchievementMediaKind, type AchievementRecord, type AchievementRecordKind, type AchievementRecordStatus } from "@shared/achievementRecords";
+import { createExamWorkspaces, examResourceKindLabel, getExamCountdown, getExamTasksForDate, normalizeExamWorkspace, updateExamDailyLog, type ExamDailyLog, type ExamResourceKind, type ExamWorkspace } from "@shared/examWorkspace";
 import { createMedievalGuildWorkspaceProject, isWorkspaceProject, type WorkspaceProject, type WorkspaceTaskStatus, workspaceTaskStatusLabel } from "@shared/projectWorkspace";
 import { ccee114CourseMap, ccee114RequirementDefinitions, getCcee114PrerequisiteAlerts, getCcee114RequirementProgress, type Ccee114CourseEntry, type Ccee114CourseGroup } from "@shared/ccee114";
 import {
@@ -97,7 +101,7 @@ import {
   type TermRank,
 } from "@shared/academic";
 
-type View = "plan" | "dashboard" | "grades" | "credits" | "quest" | "projects" | "achievements" | "badges";
+type View = "plan" | "dashboard" | "grades" | "credits" | "quest" | "projects" | "exams" | "achievements" | "badges";
 
 type PlannedCourse = {
   id: string;
@@ -119,10 +123,11 @@ type QuestData = {
   termRanks: Record<string, TermRank>;
   hasCompletedPlanIntro: boolean;
   workspaces: WorkspaceProject[];
+  examWorkspaces: ExamWorkspace[];
   achievementRecords: AchievementRecord[];
 };
 
-type AiPlanningSection = Exclude<View, "plan" | "achievements">;
+type AiPlanningSection = Exclude<View, "plan" | "achievements" | "exams">;
 type AiPlannerSnapshot = {
   gpa: number;
   gpaSystem: GradePointSystem;
@@ -154,6 +159,7 @@ const emptyQuestData: QuestData = {
   termRanks: {},
   hasCompletedPlanIntro: false,
   workspaces: [],
+  examWorkspaces: [],
   achievementRecords: [],
 };
 
@@ -171,6 +177,7 @@ const navItems: { id: View; label: string; icon: typeof Compass }[] = [
   { id: "credits", label: "學分地圖", icon: Target },
   { id: "quest", label: "智慧任務", icon: WandSparkles },
   { id: "projects", label: "專題工坊", icon: FolderKanban },
+  { id: "exams", label: "考試計畫", icon: Clock3 },
   { id: "achievements", label: "證照與比賽", icon: Trophy },
   { id: "badges", label: "成就圖鑑", icon: Award },
 ];
@@ -197,6 +204,7 @@ function normalizeQuestData(parsed: Partial<QuestData>): QuestData {
     termRanks: normalizeTermRanks(parsed.termRanks),
     hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
     workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter(isWorkspaceProject).map(project => ({ ...project, members: [], dailyLogs: Array.isArray(project.dailyLogs) ? project.dailyLogs : [] })) : [],
+    examWorkspaces: Array.isArray(parsed.examWorkspaces) ? parsed.examWorkspaces.map(normalizeExamWorkspace).filter((workspace): workspace is ExamWorkspace => workspace !== null) : [],
     achievementRecords: Array.isArray(parsed.achievementRecords) ? parsed.achievementRecords.filter(isAchievementRecord) : [],
   };
 }
@@ -211,7 +219,7 @@ function loadData(): QuestData {
 }
 
 function hasQuestData(data: QuestData) {
-  return data.courses.length > 0 || data.projects.length > 0 || data.plannedCourses.length > 0 || data.workspaces.length > 0 || data.achievementRecords.length > 0 || Object.keys(data.termRanks).length > 0 || data.hasCompletedPlanIntro;
+  return data.courses.length > 0 || data.projects.length > 0 || data.plannedCourses.length > 0 || data.workspaces.length > 0 || data.examWorkspaces.length > 0 || data.achievementRecords.length > 0 || Object.keys(data.termRanks).length > 0 || data.hasCompletedPlanIntro;
 }
 
 function courseMergeKey(course: Pick<CourseRecord, "term" | "name">) {
@@ -226,6 +234,8 @@ function mergeQuestData(cloud: QuestData, local: QuestData): QuestData {
   const mergedProjects = [...cloud.projects.map(project => ({ ...project, ...localProjects.get(project.id) })), ...local.projects.filter(project => !cloud.projects.some(existing => existing.id === project.id))];
   const localWorkspaces = new Map(local.workspaces.map(project => [project.id, project]));
   const mergedWorkspaces = [...cloud.workspaces.map(project => localWorkspaces.get(project.id) ?? project), ...local.workspaces.filter(project => !cloud.workspaces.some(existing => existing.id === project.id))];
+  const localExamWorkspaces = new Map(local.examWorkspaces.map(workspace => [workspace.id, workspace]));
+  const mergedExamWorkspaces = [...cloud.examWorkspaces.map(workspace => localExamWorkspaces.get(workspace.id) ?? workspace), ...local.examWorkspaces.filter(workspace => !cloud.examWorkspaces.some(existing => existing.id === workspace.id))];
   const localAchievementRecords = new Map(local.achievementRecords.map(record => [record.id, record]));
   const mergedAchievementRecords = [...cloud.achievementRecords.map(record => ({ ...record, ...localAchievementRecords.get(record.id) })), ...local.achievementRecords.filter(record => !cloud.achievementRecords.some(existing => existing.id === record.id))];
   const plannedKeys = new Set(cloud.plannedCourses.map(course => courseMergeKey(course)));
@@ -236,6 +246,7 @@ function mergeQuestData(cloud: QuestData, local: QuestData): QuestData {
     plannedCourses: [...cloud.plannedCourses, ...local.plannedCourses.filter(course => !plannedKeys.has(courseMergeKey(course)))],
     termRanks: { ...cloud.termRanks, ...local.termRanks },
     workspaces: mergedWorkspaces,
+    examWorkspaces: mergedExamWorkspaces,
     achievementRecords: mergedAchievementRecords,
     goals: hasQuestData(local) ? local.goals : cloud.goals,
     careerPath: hasQuestData(local) ? local.careerPath : cloud.careerPath,
@@ -504,6 +515,15 @@ function PrivateQuestContent() {
     setData(current => current.workspaces.some(project => project.id === "notion-medieval-guild-scheduler")
       ? current
       : { ...current, workspaces: [...current.workspaces, createMedievalGuildWorkspaceProject()] });
+  }, [cloudSyncStatus]);
+
+  useEffect(() => {
+    if (!cloudBootstrapComplete.current || !["ready", "saving"].includes(cloudSyncStatus)) return;
+    setData(current => {
+      const imported = createExamWorkspaces();
+      const missing = imported.filter(workspace => !current.examWorkspaces.some(existing => existing.id === workspace.id));
+      return missing.length ? { ...current, examWorkspaces: [...current.examWorkspaces, ...missing] } : current;
+    });
   }, [cloudSyncStatus]);
 
   useEffect(() => {
@@ -836,6 +856,10 @@ function PrivateQuestContent() {
     setData(current => ({ ...current, workspaces: current.workspaces.map(project => project.id === projectId ? update(project) : project) }));
   }
 
+  function updateExamWorkspace(workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) {
+    setData(current => ({ ...current, examWorkspaces: current.examWorkspaces.map(workspace => workspace.id === workspaceId ? update(workspace) : workspace) }));
+  }
+
   function openCourseEditor(course?: CourseRecord) {
     setEditingCourseId(course?.id ?? null);
     setCourseForm(course ? createCourseEditorDraft(course) : emptyCourse());
@@ -968,6 +992,7 @@ function PrivateQuestContent() {
                 return <button key={item.id} onClick={() => navigateToView(item.id)} className={`pixel-corners flex items-center gap-3 px-3 py-3 text-left text-sm font-bold transition-colors ${isActive ? "bg-[#f4c659] text-[#16233f] shadow-[3px_3px_0_#080d1f]" : "text-[#dce7ff] hover:bg-[#293d61]"}`}><Icon size={18} /><span>{item.label}</span>{isActive && <ChevronRight className="ml-auto hidden lg:block" size={16} />}</button>;
               })}
             </nav>
+            <ExamCountdownSidebar workspaces={data.examWorkspaces} onOpen={() => navigateToView("exams")} />
             <div className="mt-4 border-t-2 border-[#4b628e] px-3 pt-4">
               <p className="pixel-font text-[8px] leading-5 text-[#93a7cb]">GAME SYSTEM</p>
               <input ref={backupFileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={event => { void importLocalBackup(event.target.files?.[0]); }} />
@@ -999,9 +1024,10 @@ function PrivateQuestContent() {
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /><CareerRealityPanel recommendations={recommendations} /></>}
             {activeView === "projects" && <><ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} /><NotionProjectWorkspace workspaces={data.workspaces} onUpdate={updateWorkspace} /></>}
+            {activeView === "exams" && <ExamWorkspaceView workspaces={data.examWorkspaces} onUpdate={updateExamWorkspace} />}
             {activeView === "achievements" && <AchievementRecordsView records={data.achievementRecords} academicSkills={academicSkills.map(skill => skill.name)} notice={achievementNotice} uploading={achievementMediaUpload.isPending} onAdd={addAchievementRecord} onUpdate={updateAchievementRecord} onDelete={id => setData(current => ({ ...current, achievementRecords: current.achievementRecords.filter(record => record.id !== id) }))} onUpload={uploadAchievementEvidence} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
-            <AiPlannerPanel section={activeView === "plan" || activeView === "achievements" ? "dashboard" : activeView} snapshot={aiSnapshot} />
+            <AiPlannerPanel section={activeView === "plan" || activeView === "achievements" || activeView === "exams" ? "dashboard" : activeView as AiPlanningSection} snapshot={aiSnapshot} />
           </div>
         </div>
       </div>
@@ -1301,6 +1327,56 @@ function ProjectEditor({ form, editing, setForm, onSave, onCancel }: { form: Omi
   return <Panel className="h-fit overflow-hidden 2xl:sticky 2xl:top-5"><PanelTitle eyebrow="PROJECT EDITOR" title={form ? editing ? "編輯專題" : "新增專題" : "工坊準備中"} action={<FolderKanban className="text-[#f4c659]" />} /><div className="p-5">{!form ? <EmptyState icon={<Plus />} title="建立一個任務" detail="把課堂作品、競賽、研究或社團專案記錄下來。" /> : <div className="space-y-4"><Field label="專題名稱"><input value={form.name} onChange={event => setForm(current => current && { ...current, name: event.target.value })} placeholder="例如：畢業專題名稱" className="pixel-input w-full px-3 py-2.5" /></Field><Field label="專題描述"><textarea value={form.description} onChange={event => setForm(current => current && { ...current, description: event.target.value })} placeholder="說明目標、角色與成果…" rows={3} className="pixel-input w-full resize-y px-3 py-2.5" /></Field><Field label="技術標籤"><input value={form.tags.join(", ")} onChange={event => setForm(current => current && { ...current, tags: event.target.value.split(",").map(item => item.trim()).filter(Boolean) })} placeholder="React, Figma, Python" className="pixel-input w-full px-3 py-2.5" /><p className="mt-1.5 text-[11px] text-[#91a5c8]">以半形逗號分隔。</p></Field><div className="grid grid-cols-2 gap-3"><Field label="開始月份"><input type="month" value={form.startDate} onChange={event => setForm(current => current && { ...current, startDate: event.target.value })} className="pixel-input w-full px-2 py-2.5" /></Field><Field label="結束月份"><input type="month" value={form.endDate} onChange={event => setForm(current => current && { ...current, endDate: event.target.value })} className="pixel-input w-full px-2 py-2.5" /></Field></div><Field label="完成狀態"><select value={form.status} onChange={event => setForm(current => current && { ...current, status: event.target.value as ProjectStatus })} className="pixel-input w-full px-3 py-2.5">{Object.entries(statusLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></Field><div className="flex gap-3 pt-2"><PixelButton onClick={onSave} disabled={!form.name.trim()} className="flex-1 bg-[#f4c659] text-[#162442]"><ShieldCheck size={16} /> 儲存專題</PixelButton><PixelButton onClick={onCancel} className="bg-[#33486c]"><X size={16} /></PixelButton></div></div>}</div></Panel>;
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block"><span className="mb-1.5 block text-xs font-bold text-[#c8d6ed]">{label}</span>{children}</label>; }
+
+function ExamCountdownSidebar({ workspaces, onOpen }: { workspaces: ExamWorkspace[]; onOpen: () => void }) {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!workspaces.length) return null;
+  return <div className="mt-4 border-t-2 border-[#4b628e] px-3 pt-4"><div className="flex items-center justify-between gap-2"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">EXAM COUNTDOWN</p><Clock3 size={14} className="text-[#f4c659]" /></div><button onClick={onOpen} className="mt-2 block w-full text-left">{workspaces.map(workspace => { const countdown = getExamCountdown(workspace.examDate, now); return <span key={workspace.id} className="mb-2 block border-2 border-[#526b97] bg-[#1a2e4d] px-2 py-2 transition-colors hover:border-[#f4c659]"><span className="flex items-center justify-between gap-2"><span className="font-black text-[#e7efff]">{workspace.code.toUpperCase()}</span><span className={`pixel-font text-[8px] ${countdown.status === "future" ? "text-[#74e2b1]" : countdown.status === "today" ? "text-[#f4c659]" : "text-[#9eb1d2]"}`}>{countdown.label}</span></span><span className="mt-1 block text-[10px] font-bold text-[#aebfdb]">{workspace.examDate}{workspace.examTime ? ` ${workspace.examTime}` : ""}</span></span>; })}</button></div>;
+}
+
+type ExamResourceDraft = { title: string; kind: ExamResourceKind; url: string; note: string };
+type ExamTaskDraft = { date: string; title: string; detail: string; plannedMinutes: string };
+
+function ExamWorkspaceView({ workspaces, onUpdate }: { workspaces: ExamWorkspace[]; onUpdate: (workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) => void }) {
+  const [activeDate, setActiveDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  function updateDailyLog(workspace: ExamWorkspace, patch: (current: ExamDailyLog) => ExamDailyLog, taskId?: string, checked?: boolean) {
+    onUpdate(workspace.id, current => updateExamDailyLog(current, activeDate, patch, taskId, checked));
+  }
+
+  if (!workspaces.length) return <Panel gold className="overflow-hidden"><PanelTitle eyebrow="EXAM PREP" title="考試準備工作區" /><div className="p-5"><EmptyState icon={<Clock3 />} title="正在建立考試工作區" detail="完成私人雲端資料讀取後，會顯示已匯入的多益與 CPE 計畫。" /></div></Panel>;
+  return <div className="space-y-4 animate-pop-in"><Panel gold className="overflow-hidden"><PanelTitle eyebrow="EXAM PREPARATION QUESTS" title="證照考試準備基地" action={<Clock3 className="text-[#f4c659]" />} /><div className="p-5"><p className="border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d5f9e6]">多益與 CPE 計畫已從 Notion 單向匯入。這裡的勾選、讀書時間、筆記、日期與準備資料只會同步至你的私人 Campus Quest，不會回寫或改動原始 Notion 頁面。</p></div></Panel>{workspaces.map(workspace => <ExamWorkspaceCard key={workspace.id} workspace={workspace} activeDate={activeDate} now={now} onActiveDateChange={setActiveDate} onUpdate={onUpdate} onUpdateDailyLog={updateDailyLog} />)}</div>;
+}
+
+function ExamWorkspaceCard({ workspace, activeDate, now, onActiveDateChange, onUpdate, onUpdateDailyLog }: { workspace: ExamWorkspace; activeDate: string; now: Date; onActiveDateChange: (date: string) => void; onUpdate: (workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) => void; onUpdateDailyLog: (workspace: ExamWorkspace, patch: (current: ExamDailyLog) => ExamDailyLog, taskId?: string, checked?: boolean) => void }) {
+  const countdown = getExamCountdown(workspace.examDate, now);
+  const activeTasks = getExamTasksForDate(workspace, activeDate);
+  const activeLog = workspace.dailyLogs.find(log => log.date === activeDate) ?? { id: "draft", date: activeDate, completedTaskIds: [] };
+  const completed = workspace.dailyTasks.filter(task => task.status === "done").length;
+  const progress = workspace.dailyTasks.length ? Math.round((completed / workspace.dailyTasks.length) * 100) : 0;
+  const phases = Array.from(new Set(workspace.dailyTasks.map(task => task.phase).filter(Boolean))) as string[];
+  return <Panel className="overflow-hidden" gold><PanelTitle eyebrow={workspace.code === "toeic" ? "TOEIC SPRINT" : "CPE SPRINT"} title={workspace.name} action={<button onClick={() => window.open(workspace.source.url, "_blank", "noopener,noreferrer")} className="flex items-center gap-1 border-2 border-[#647aa2] bg-[#263b5d] px-3 py-2 text-xs font-black text-[#dce9ff] hover:border-[#f4c659] hover:text-[#fff0ba]"><ExternalLink size={14} /> Notion 原始計畫</button>} /><div className="grid gap-4 p-5 xl:grid-cols-[minmax(0,1fr)_300px]"><div className="space-y-4"><section className="border-3 border-[#536994] bg-[#14233e] p-4"><div className="flex flex-wrap gap-4"><div className="grid h-24 w-24 shrink-0 place-items-center rounded-full border-4 border-[#7891bd] p-2" style={{ background: `conic-gradient(#f4c659 ${progress * 3.6}deg, #263b5e 0deg)` }}><div className="grid h-full w-full place-items-center rounded-full bg-[#152645] text-center"><span className="text-xl font-black text-[#fff2be]">{progress}%</span><span className="pixel-font text-[7px] text-[#9eb5da]">PROGRESS</span></div></div><div className="min-w-0 flex-1"><p className="pixel-font text-[8px] text-[#f4c659]">PRIVATE EXAM QUEST</p><p className="mt-2 text-sm leading-6 text-[#c1d1ea]">{workspace.description}</p><div className="mt-3 flex flex-wrap gap-2"><span className="border border-[#6f82ab] bg-[#243a5e] px-2 py-1 text-xs font-black text-[#dce7ff]">完成 {completed}/{workspace.dailyTasks.length} 項</span>{phases.slice(0, 3).map(phase => <span key={phase} className="border border-[#526f8f] bg-[#1c3152] px-2 py-1 text-xs font-bold text-[#bcd0f0]">{phase}</span>)}</div></div></div></section><ExamDailyChecklist workspace={workspace} activeDate={activeDate} activeTasks={activeTasks} activeLog={activeLog} onActiveDateChange={onActiveDateChange} onUpdateDailyLog={onUpdateDailyLog} onUpdate={onUpdate} /><ExamResourceLibrary workspace={workspace} onUpdate={onUpdate} /></div><aside className="space-y-4"><section className="border-3 border-[#f4c659] bg-[#493d24] p-4 shadow-[3px_3px_0_#080d1f]"><p className="pixel-font text-[8px] text-[#ffe8a3]">EXAM COUNTDOWN</p><p className="mt-2 text-3xl font-black text-[#fff1bb]">{countdown.status === "future" ? countdown.days : countdown.status === "today" ? "TODAY" : "—"}</p><p className="mt-1 text-sm font-bold text-[#ffe8a3]">{countdown.status === "future" ? "天後應試" : countdown.label}</p><div className="mt-4 grid gap-3"><Field label="考試日期"><input type="date" value={workspace.examDate} onChange={event => onUpdate(workspace.id, current => ({ ...current, examDate: event.target.value }))} className="pixel-input w-full px-2 py-2 text-sm" /></Field><Field label="考試時間（可留空）"><input value={workspace.examTime ?? ""} onChange={event => onUpdate(workspace.id, current => ({ ...current, examTime: event.target.value || undefined }))} placeholder="例如：18:40" className="pixel-input w-full px-2 py-2 text-sm" /></Field></div></section><section className="border-2 border-[#526b97] bg-[#172a47] p-4"><p className="pixel-font text-[8px] text-[#93a7cb]">EXAM DAY CHECKLIST</p><h4 className="mt-1 font-black text-[#fff8df]">考試日提醒</h4><ul className="mt-3 space-y-2">{workspace.examDayChecklist.map(item => <li key={item} className="flex gap-2 text-xs leading-5 text-[#c7d6ed]"><span className="mt-1 h-2 w-2 shrink-0 bg-[#f4c659]" />{item}</li>)}</ul></section><section className="border-2 border-[#526b97] bg-[#172a47] p-4"><p className="pixel-font text-[8px] text-[#93a7cb]">RECENT STUDY LOG</p><h4 className="mt-1 font-black text-[#fff8df]">近期準備紀錄</h4>{workspace.dailyLogs.length ? <div className="mt-3 space-y-2">{workspace.dailyLogs.slice(0, 6).map(log => <article key={log.id} className="border-l-4 border-[#74e2b1] bg-[#1d3153] p-2"><div className="flex justify-between gap-2 text-xs font-black text-[#fff4c8]"><span>{log.date}</span>{log.minutes !== undefined && <span className="text-[#74e2b1]">{log.minutes} 分</span>}</div><p className="mt-1 text-[11px] text-[#b9cce8]">勾選 {log.completedTaskIds.length} 項</p>{log.note && <p className="mt-1 text-[11px] leading-5 text-[#d7e6fc]">{log.note}</p>}</article>)}</div> : <p className="mt-3 text-xs leading-5 text-[#aec2e0]">尚未有讀書紀錄。選擇日期、勾選任務或寫下讀書筆記後會顯示在這裡。</p>}</section></aside></div></Panel>;
+}
+
+function ExamDailyChecklist({ workspace, activeDate, activeTasks, activeLog, onActiveDateChange, onUpdateDailyLog, onUpdate }: { workspace: ExamWorkspace; activeDate: string; activeTasks: ReturnType<typeof getExamTasksForDate>; activeLog: ExamDailyLog; onActiveDateChange: (date: string) => void; onUpdateDailyLog: (workspace: ExamWorkspace, patch: (current: ExamDailyLog) => ExamDailyLog, taskId?: string, checked?: boolean) => void; onUpdate: (workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) => void }) {
+  const [draft, setDraft] = useState<ExamTaskDraft>({ date: activeDate, title: "", detail: "", plannedMinutes: "" });
+  useEffect(() => setDraft(current => ({ ...current, date: activeDate })), [activeDate]);
+  return <section className="border-2 border-[#48628d] bg-[#172a47] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="pixel-font text-[8px] text-[#93a7cb]">DAILY CHECKLIST</p><h4 className="mt-1 font-black text-[#fff8df]">指定日期的讀書紀錄</h4></div><input type="date" value={activeDate} onChange={event => onActiveDateChange(event.target.value)} className="pixel-input px-3 py-2 text-sm" /></div><div className="mt-4 space-y-2">{activeTasks.length ? activeTasks.map(task => { const checked = activeLog.completedTaskIds.includes(task.id); return <label key={task.id} className={`flex cursor-pointer items-start gap-3 border-2 p-3 transition-colors ${checked ? "border-[#4eaa80] bg-[#1c4a40]" : "border-[#405a83] bg-[#1a2e4d] hover:border-[#718ab5]"}`}><input type="checkbox" checked={checked} onChange={event => onUpdateDailyLog(workspace, current => ({ ...current, completedTaskIds: event.target.checked ? [...current.completedTaskIds, task.id] : current.completedTaskIds.filter(id => id !== task.id) }), task.id, event.target.checked)} className="mt-1 h-4 w-4 accent-[#74e2b1]" /><span className="min-w-0 flex-1"><span className={`block font-bold ${checked ? "text-[#d9ffe9] line-through" : "text-[#fff8df]"}`}>{task.title}</span>{task.detail && <span className="mt-1 block text-xs leading-5 text-[#aec2e0]">{task.detail}</span>}<span className="mt-1 block text-[11px] font-bold text-[#f4c659]">{task.resourceLabel ?? "一般任務"}{task.plannedMinutes ? ` · ${task.plannedMinutes} 分` : ""}</span></span>{task.sourceUrl && <button type="button" onClick={event => { event.preventDefault(); window.open(task.sourceUrl, "_blank", "noopener,noreferrer"); }} aria-label={`開啟 ${task.title} 的 Notion 來源`} className="p-1 text-[#a9bde0] hover:text-[#f4c659]"><ExternalLink size={15} /></button>}</label>; }) : <p className="border-l-4 border-[#657ea9] pl-3 text-sm leading-6 text-[#aec2e0]">這一天尚未排定任務；可在下方新增自己的讀書項目。</p>}</div><div className="mt-4 grid gap-3 sm:grid-cols-[130px_minmax(0,1fr)]"><Field label="投入時間（分）"><input type="number" min="0" value={activeLog.minutes ?? ""} onChange={event => onUpdateDailyLog(workspace, current => ({ ...current, minutes: event.target.value ? Number(event.target.value) : undefined }))} placeholder="例如 90" className="pixel-input w-full px-3 py-2" /></Field><Field label="今日學習紀錄"><textarea rows={2} value={activeLog.note ?? ""} onChange={event => onUpdateDailyLog(workspace, current => ({ ...current, note: event.target.value || undefined }))} placeholder="記下錯題、讀書內容或下一步…" className="pixel-input w-full resize-y px-3 py-2" /></Field></div><details className="mt-4 border-2 border-dashed border-[#59749f] bg-[#142540] p-3"><summary className="cursor-pointer font-black text-[#d8e5ff]">＋ 新增個人讀書任務</summary><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="日期"><input type="date" value={draft.date} onChange={event => setDraft(current => ({ ...current, date: event.target.value }))} className="pixel-input w-full px-3 py-2" /></Field><Field label="預計時間（分）"><input type="number" min="0" value={draft.plannedMinutes} onChange={event => setDraft(current => ({ ...current, plannedMinutes: event.target.value }))} className="pixel-input w-full px-3 py-2" /></Field><Field label="任務名稱"><input value={draft.title} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} placeholder="例如：完成一回模考" className="pixel-input w-full px-3 py-2" /></Field><Field label="補充說明"><input value={draft.detail} onChange={event => setDraft(current => ({ ...current, detail: event.target.value }))} placeholder="可寫使用的教材或目標" className="pixel-input w-full px-3 py-2" /></Field></div><PixelButton onClick={() => { if (!draft.title.trim() || !draft.date) return; onUpdate(workspace.id, current => ({ ...current, dailyTasks: [...current.dailyTasks, { id: crypto.randomUUID(), date: draft.date, title: draft.title.trim(), detail: draft.detail.trim() || undefined, plannedMinutes: draft.plannedMinutes ? Number(draft.plannedMinutes) : undefined, status: "not-started" }] })); setDraft({ date: activeDate, title: "", detail: "", plannedMinutes: "" }); }} disabled={!draft.title.trim() || !draft.date} className="mt-3 bg-[#245d58] text-[#e1fff6]"><Plus size={15} /> 加入讀書任務</PixelButton></details></section>;
+}
+
+function ExamResourceLibrary({ workspace, onUpdate }: { workspace: ExamWorkspace; onUpdate: (workspaceId: string, update: (workspace: ExamWorkspace) => ExamWorkspace) => void }) {
+  const [draft, setDraft] = useState<ExamResourceDraft>({ title: "", kind: "link", url: "", note: "" });
+  return <section className="border-2 border-[#48628d] bg-[#172a47] p-4"><div className="flex items-center justify-between gap-3"><div><p className="pixel-font text-[8px] text-[#93a7cb]">PREP RESOURCE CACHE</p><h4 className="mt-1 font-black text-[#fff8df]">準備資料庫</h4></div><BookMarked className="text-[#f4c659]" size={19} /></div><p className="mt-2 text-xs leading-5 text-[#b6c8e5]">可保留自己的題庫、講義、單字、筆記與外部連結；修改只存在你的私人工作區。</p><div className="mt-4 space-y-2">{workspace.resources.map(resource => <details key={resource.id} className="border-2 border-[#405a83] bg-[#1a2e4d] p-3"><summary className="flex cursor-pointer list-none items-center gap-2"><span className="border border-[#6a82ab] bg-[#243a5e] px-2 py-1 text-[10px] font-black text-[#dce7ff]">{examResourceKindLabel[resource.kind]}</span><span className="min-w-0 flex-1 truncate font-black text-[#fff8df]">{resource.title}</span>{resource.url && <a href={resource.url} target="_blank" rel="noreferrer" onClick={event => event.stopPropagation()} className="text-[#a9bde0] hover:text-[#f4c659]" aria-label={`開啟 ${resource.title}`}><ExternalLink size={15} /></a>}</summary><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="名稱"><input value={resource.title} onChange={event => onUpdate(workspace.id, current => ({ ...current, resources: current.resources.map(item => item.id === resource.id ? { ...item, title: event.target.value } : item) }))} className="pixel-input w-full px-3 py-2" /></Field><Field label="類型"><select value={resource.kind} onChange={event => onUpdate(workspace.id, current => ({ ...current, resources: current.resources.map(item => item.id === resource.id ? { ...item, kind: event.target.value as ExamResourceKind } : item) }))} className="pixel-input w-full px-3 py-2">{Object.entries(examResourceKindLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="外部網址（可留空）"><input value={resource.url ?? ""} onChange={event => onUpdate(workspace.id, current => ({ ...current, resources: current.resources.map(item => item.id === resource.id ? { ...item, url: event.target.value || undefined } : item) }))} placeholder="https://…" className="pixel-input w-full px-3 py-2" /></Field><Field label="備註"><input value={resource.note ?? ""} onChange={event => onUpdate(workspace.id, current => ({ ...current, resources: current.resources.map(item => item.id === resource.id ? { ...item, note: event.target.value || undefined } : item) }))} className="pixel-input w-full px-3 py-2" /></Field></div>{resource.sourceRef && <p className="mt-2 text-[10px] leading-5 text-[#91a8cb]">Notion 來源：{resource.sourceRef}</p>}<button onClick={() => window.confirm(`確定刪除「${resource.title}」嗎？`) && onUpdate(workspace.id, current => ({ ...current, resources: current.resources.filter(item => item.id !== resource.id) }))} className="mt-3 text-xs font-black text-[#ffb2a9] hover:text-[#f28682]">刪除這筆資料</button></details>)}</div><details className="mt-4 border-2 border-dashed border-[#59749f] bg-[#142540] p-3"><summary className="cursor-pointer font-black text-[#d8e5ff]">＋ 加入自己的準備資料</summary><div className="mt-3 grid gap-3 md:grid-cols-2"><Field label="名稱"><input value={draft.title} onChange={event => setDraft(current => ({ ...current, title: event.target.value }))} placeholder="例如：單字書第 3 單元" className="pixel-input w-full px-3 py-2" /></Field><Field label="類型"><select value={draft.kind} onChange={event => setDraft(current => ({ ...current, kind: event.target.value as ExamResourceKind }))} className="pixel-input w-full px-3 py-2">{Object.entries(examResourceKindLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="外部網址（可留空）"><input value={draft.url} onChange={event => setDraft(current => ({ ...current, url: event.target.value }))} placeholder="https://…" className="pixel-input w-full px-3 py-2" /></Field><Field label="備註"><input value={draft.note} onChange={event => setDraft(current => ({ ...current, note: event.target.value }))} placeholder="使用方式、章節或目標" className="pixel-input w-full px-3 py-2" /></Field></div><PixelButton onClick={() => { if (!draft.title.trim()) return; onUpdate(workspace.id, current => ({ ...current, resources: [...current.resources, { id: crypto.randomUUID(), title: draft.title.trim(), kind: draft.kind, url: draft.url.trim() || undefined, note: draft.note.trim() || undefined, createdAt: new Date().toISOString() }] })); setDraft({ title: "", kind: "link", url: "", note: "" }); }} disabled={!draft.title.trim()} className="mt-3 bg-[#245d58] text-[#e1fff6]"><Plus size={15} /> 儲存準備資料</PixelButton></details></section>;
+}
 
 function BadgesView({ achievements, unlocked }: { achievements: ReturnType<typeof getAchievements>; unlocked: number }) {
   return <div className="space-y-4 animate-pop-in"><Panel gold className="overflow-hidden"><div className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between"><div><p className="pixel-font text-[9px] leading-6 text-[#f4c659]">ACHIEVEMENT COMPENDIUM</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">成就圖鑑</h2><p className="mt-2 text-sm text-[#c8d5e9]">目前已點亮 <b className="text-[#f4c659]">{unlocked}</b> / {achievements.length} 枚校園徽章。</p></div><div className="flex h-16 w-16 items-center justify-center border-4 border-[#f4c659] bg-[#594b29] shadow-[4px_4px_0_#080d1f]"><Trophy className="h-8 w-8 text-[#ffe797]" /></div></div></Panel><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{achievements.map((achievement, index) => <article key={achievement.id} className={`pixel-panel p-5 ${achievement.unlocked ? "bg-[#243856]" : "bg-[#172238] opacity-70 grayscale"}`}><div className="flex items-start gap-4"><span className={`flex h-14 w-14 shrink-0 items-center justify-center border-3 text-2xl ${achievement.unlocked ? "border-[#f4c659] bg-[#614f27] text-[#ffe99a]" : "border-[#657795] bg-[#2c3d5b] text-[#9bacca]"}`}>{achievement.unlocked ? achievement.icon : "?"}</span><div><p className="pixel-font text-[8px] leading-5 text-[#9db1d2]">BADGE {String(index + 1).padStart(2,"0")}</p><h3 className="mt-1 font-black text-[#fff8df]">{achievement.title}</h3><p className="mt-2 text-sm leading-6 text-[#b9c8df]">{achievement.description}</p></div></div><div className={`mt-5 border-t-2 pt-3 text-xs font-black ${achievement.unlocked ? "border-[#6680aa] text-[#8ef0bd]" : "border-[#4e6080] text-[#91a4c4]"}`}>{achievement.unlocked ? "✓ 已解鎖" : "◌ 尚未解鎖"}</div></article>)}</div></div>;
