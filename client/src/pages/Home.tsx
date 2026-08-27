@@ -32,6 +32,7 @@ import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
 import { createLocalBackup, parseLocalBackup } from "@shared/localBackup";
+import { achievementRecordKindLabel, achievementRecordStatusLabel, isAchievementRecord, type AchievementEvidence, type AchievementMediaKind, type AchievementRecord, type AchievementRecordKind, type AchievementRecordStatus } from "@shared/achievementRecords";
 import { createMedievalGuildWorkspaceProject, isWorkspaceProject, type WorkspaceProject, type WorkspaceTaskStatus, workspaceTaskStatusLabel } from "@shared/projectWorkspace";
 import { ccee114CourseMap, ccee114RequirementDefinitions, getCcee114PrerequisiteAlerts, getCcee114RequirementProgress, type Ccee114CourseEntry, type Ccee114CourseGroup } from "@shared/ccee114";
 import {
@@ -96,7 +97,7 @@ import {
   type TermRank,
 } from "@shared/academic";
 
-type View = "plan" | "dashboard" | "grades" | "credits" | "quest" | "projects" | "badges";
+type View = "plan" | "dashboard" | "grades" | "credits" | "quest" | "projects" | "achievements" | "badges";
 
 type PlannedCourse = {
   id: string;
@@ -118,9 +119,10 @@ type QuestData = {
   termRanks: Record<string, TermRank>;
   hasCompletedPlanIntro: boolean;
   workspaces: WorkspaceProject[];
+  achievementRecords: AchievementRecord[];
 };
 
-type AiPlanningSection = Exclude<View, "plan">;
+type AiPlanningSection = Exclude<View, "plan" | "achievements">;
 type AiPlannerSnapshot = {
   gpa: number;
   gpaSystem: GradePointSystem;
@@ -152,6 +154,7 @@ const emptyQuestData: QuestData = {
   termRanks: {},
   hasCompletedPlanIntro: false,
   workspaces: [],
+  achievementRecords: [],
 };
 
 const categoryLabel: Record<CourseCategory, string> = { required: "電通系必修", elective: "專業選修", common: "校內共同必修", general: "通識", "undeclared-required": "不分系必修" };
@@ -168,6 +171,7 @@ const navItems: { id: View; label: string; icon: typeof Compass }[] = [
   { id: "credits", label: "學分地圖", icon: Target },
   { id: "quest", label: "智慧任務", icon: WandSparkles },
   { id: "projects", label: "專題工坊", icon: FolderKanban },
+  { id: "achievements", label: "證照與比賽", icon: Trophy },
   { id: "badges", label: "成就圖鑑", icon: Award },
 ];
 
@@ -193,6 +197,7 @@ function normalizeQuestData(parsed: Partial<QuestData>): QuestData {
     termRanks: normalizeTermRanks(parsed.termRanks),
     hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
     workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter(isWorkspaceProject).map(project => ({ ...project, members: [], dailyLogs: Array.isArray(project.dailyLogs) ? project.dailyLogs : [] })) : [],
+    achievementRecords: Array.isArray(parsed.achievementRecords) ? parsed.achievementRecords.filter(isAchievementRecord) : [],
   };
 }
 
@@ -206,7 +211,7 @@ function loadData(): QuestData {
 }
 
 function hasQuestData(data: QuestData) {
-  return data.courses.length > 0 || data.projects.length > 0 || data.plannedCourses.length > 0 || data.workspaces.length > 0 || Object.keys(data.termRanks).length > 0 || data.hasCompletedPlanIntro;
+  return data.courses.length > 0 || data.projects.length > 0 || data.plannedCourses.length > 0 || data.workspaces.length > 0 || data.achievementRecords.length > 0 || Object.keys(data.termRanks).length > 0 || data.hasCompletedPlanIntro;
 }
 
 function courseMergeKey(course: Pick<CourseRecord, "term" | "name">) {
@@ -221,6 +226,8 @@ function mergeQuestData(cloud: QuestData, local: QuestData): QuestData {
   const mergedProjects = [...cloud.projects.map(project => ({ ...project, ...localProjects.get(project.id) })), ...local.projects.filter(project => !cloud.projects.some(existing => existing.id === project.id))];
   const localWorkspaces = new Map(local.workspaces.map(project => [project.id, project]));
   const mergedWorkspaces = [...cloud.workspaces.map(project => localWorkspaces.get(project.id) ?? project), ...local.workspaces.filter(project => !cloud.workspaces.some(existing => existing.id === project.id))];
+  const localAchievementRecords = new Map(local.achievementRecords.map(record => [record.id, record]));
+  const mergedAchievementRecords = [...cloud.achievementRecords.map(record => ({ ...record, ...localAchievementRecords.get(record.id) })), ...local.achievementRecords.filter(record => !cloud.achievementRecords.some(existing => existing.id === record.id))];
   const plannedKeys = new Set(cloud.plannedCourses.map(course => courseMergeKey(course)));
   return {
     ...cloud,
@@ -229,6 +236,7 @@ function mergeQuestData(cloud: QuestData, local: QuestData): QuestData {
     plannedCourses: [...cloud.plannedCourses, ...local.plannedCourses.filter(course => !plannedKeys.has(courseMergeKey(course)))],
     termRanks: { ...cloud.termRanks, ...local.termRanks },
     workspaces: mergedWorkspaces,
+    achievementRecords: mergedAchievementRecords,
     goals: hasQuestData(local) ? local.goals : cloud.goals,
     careerPath: hasQuestData(local) ? local.careerPath : cloud.careerPath,
     preferences: hasQuestData(local) ? local.preferences : cloud.preferences,
@@ -368,6 +376,7 @@ function PrivateQuestContent() {
   const [fragmentImportError, setFragmentImportError] = useState<string | null>(null);
   const [fragmentHash, setFragmentHash] = useState(() => window.location.hash);
   const [backupNotice, setBackupNotice] = useState<string | null>(null);
+  const [achievementNotice, setAchievementNotice] = useState<string | null>(null);
   const [cloudSyncStatus, setCloudSyncStatus] = useState<"loading" | "ready" | "saving" | "offline">("loading");
   const mounted = useRef(false);
   const fragmentImportInFlight = useRef(false);
@@ -393,6 +402,7 @@ function PrivateQuestContent() {
   });
   const cloudState = trpc.academicSync.get.useQuery(undefined, { retry: 1, refetchOnWindowFocus: false });
   const cloudSave = trpc.academicSync.save.useMutation();
+  const achievementMediaUpload = trpc.achievementMedia.upload.useMutation();
 
   const gpa = useMemo(() => calculateGpa(data.courses, data.system), [data.courses, data.system]);
   const numericAverage = useMemo(() => calculateNumericAverage(data.courses), [data.courses]);
@@ -792,6 +802,36 @@ function PrivateQuestContent() {
     setEditingProjectId(null);
   }
 
+  function addAchievementRecord(kind: AchievementRecordKind) {
+    const timestamp = new Date().toISOString();
+    setData(current => ({ ...current, achievementRecords: [{ id: crypto.randomUUID(), kind, title: kind === "certificate" ? "未命名證照" : "未命名比賽", status: "planning", skills: [], evidence: [], createdAt: timestamp, updatedAt: timestamp }, ...current.achievementRecords] }));
+  }
+
+  function updateAchievementRecord(id: string, patch: Partial<AchievementRecord>) {
+    setData(current => ({ ...current, achievementRecords: current.achievementRecords.map(record => record.id === id ? { ...record, ...patch, updatedAt: new Date().toISOString() } : record) }));
+  }
+
+  async function uploadAchievementEvidence(recordId: string, file: File) {
+    if (file.size > 20 * 1024 * 1024) {
+      setAchievementNotice("圖片或影片檔案上限為 20 MB，請改用較小檔案或新增外部影片連結。");
+      return;
+    }
+    try {
+      const encoded = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("檔案讀取失敗"));
+        reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+        reader.readAsDataURL(file);
+      });
+      const evidence = await achievementMediaUpload.mutateAsync({ recordId, fileName: file.name, mimeType: file.type || "application/octet-stream", base64: encoded });
+      const currentEvidence = data.achievementRecords.find(record => record.id === recordId)?.evidence ?? [];
+      updateAchievementRecord(recordId, { evidence: [...currentEvidence, evidence] });
+      setAchievementNotice(`已安全上傳「${file.name}」，只有本人登入後可查看。`);
+    } catch (error) {
+      setAchievementNotice(error instanceof Error ? error.message : "附件上傳失敗，請稍後再試。");
+    }
+  }
+
   function updateWorkspace(projectId: string, update: (project: WorkspaceProject) => WorkspaceProject) {
     setData(current => ({ ...current, workspaces: current.workspaces.map(project => project.id === projectId ? update(project) : project) }));
   }
@@ -959,8 +999,9 @@ function PrivateQuestContent() {
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
             {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /><CareerRealityPanel recommendations={recommendations} /></>}
             {activeView === "projects" && <><ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} /><NotionProjectWorkspace workspaces={data.workspaces} onUpdate={updateWorkspace} /></>}
+            {activeView === "achievements" && <AchievementRecordsView records={data.achievementRecords} academicSkills={academicSkills.map(skill => skill.name)} notice={achievementNotice} uploading={achievementMediaUpload.isPending} onAdd={addAchievementRecord} onUpdate={updateAchievementRecord} onDelete={id => setData(current => ({ ...current, achievementRecords: current.achievementRecords.filter(record => record.id !== id) }))} onUpload={uploadAchievementEvidence} />}
             {activeView === "badges" && <BadgesView achievements={achievements} unlocked={unlockedAchievements.length} />}
-            <AiPlannerPanel section={activeView === "plan" ? "dashboard" : activeView} snapshot={aiSnapshot} />
+            <AiPlannerPanel section={activeView === "plan" || activeView === "achievements" ? "dashboard" : activeView} snapshot={aiSnapshot} />
           </div>
         </div>
       </div>
@@ -1171,6 +1212,33 @@ function CareerQuestView({ recommendations, careerPath, onCareerPathChange, goal
     <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="UNLOCKED COURSE QUESTS" title="現在可修的關鍵課程" action={<BookOpen className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#40557c] px-5">{recommendations.recommendedCourses.map((course, index) => <div key={course.id} className="py-5"><div className="flex flex-wrap items-start justify-between gap-3"><div className="flex gap-3"><span className="pixel-font flex h-9 w-9 shrink-0 items-center justify-center border-2 border-[#74e2b1] bg-[#1f4d47] text-[10px] text-[#c9ffde]">0{index + 1}</span><div><p className="font-black text-[#fff8df]">{course.name}</p><p className="mt-1 text-xs leading-5 text-[#afc0dd]">{course.description}</p></div></div><span className="border-2 border-[#f4c659] bg-[#514323] px-2 py-1 text-xs font-black text-[#ffe797]">適配 {course.careerFit[careerPath]}%</span></div><div className="mt-3 flex flex-wrap gap-2 pl-12">{course.skills.map(skill => <span key={skill} className="border border-[#5e739c] bg-[#24375a] px-2 py-1 text-xs font-bold text-[#d6e5ff]">{skill}</span>)}<span className="border border-[#6ee1af] bg-[#1e4d46] px-2 py-1 text-xs font-black text-[#bdf8d7]">可立即修習</span></div></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="ABILITY GAP" title="能力缺口與專題任務" action={<WandSparkles className="text-[#f4c659]" />} /><div className="p-5"><div className="border-2 border-[#536994] bg-[#172640] p-4"><p className="text-xs font-bold text-[#aebfdf]">優先補強能力</p><div className="mt-3 flex flex-wrap gap-2">{recommendations.skillGaps.length ? recommendations.skillGaps.map(skill => <span key={skill} className="border-2 border-[#aa97ff] bg-[#40376f] px-2 py-1 text-xs font-black text-[#ded6ff]">{skill}</span>) : <span className="text-sm font-bold text-[#9af0c3]">核心能力已完整，適合挑戰整合型專題。</span>}</div></div><div className="mt-4 border-2 border-[#f4c659] bg-[#3f3521] p-4"><p className="pixel-font text-[8px] leading-5 text-[#f4c659]">PORTFOLIO SIDE QUEST</p><h3 className="mt-2 font-black text-[#fff8df]">{recommendations.projectSuggestion.title}</h3><p className="mt-2 text-sm leading-7 text-[#d3dfef]">{recommendations.projectSuggestion.description}</p><p className="mt-3 border-l-4 border-[#a998ff] pl-3 text-xs leading-6 text-[#d7ccff]">{recommendations.projectSuggestion.rationale}</p><div className="mt-3 flex flex-wrap gap-2">{recommendations.projectSuggestion.skills.map(skill => <span key={skill} className="border border-[#f4c659] px-2 py-1 text-xs font-black text-[#ffe797]">#{skill}</span>)}</div></div></div></Panel></div>
     <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]"><Panel className="overflow-hidden"><PanelTitle eyebrow="PREREQUISITE GATES" title="待解鎖的進階課程" action={<Target className="text-[#f4c659]" />} /><div className="divide-y-2 divide-[#40557c] px-5">{recommendations.lockedCourses.map(course => <div key={course.id} className="flex flex-wrap items-center justify-between gap-3 py-4"><div><p className="font-black text-[#d7e2f6]">{course.name}</p><p className="mt-1 text-xs leading-5 text-[#9eb1d0]">尚缺先修：{course.missingPrerequisites.join("、")}</p></div><span className="inline-flex items-center gap-1 border-2 border-[#677996] bg-[#243451] px-2 py-1 text-xs font-black text-[#c4d2e9]"><CircleHelp size={14} /> 先修未完成</span></div>)}</div></Panel><Panel className="overflow-hidden"><PanelTitle eyebrow="CAMPAIGN STATUS" title="本學期戰術摘要" action={<BarChart3 className="text-[#f4c659]" />} /><div className="space-y-4 p-5"><SmallMetric label="目前 GPA" value={gpa.toFixed(2)} /><SmallMetric label="畢業主線" value={`${completion}%`} /><SmallMetric label="建議學分節奏" value={`${recommendations.suggestedCredits} 學分／學期`} /><div className="border-l-4 border-[#74e2b1] bg-[#183d3a] p-3 text-xs leading-6 text-[#c5f5dc]">{recommendations.goal}</div><p className="text-xs leading-6 text-[#aebfdd]">已完成專題 {completedProjects} 項；將上方建議專題加入工坊，可持續追蹤作品集成長。</p></div></Panel></div>
   </div>;
+}
+
+function AchievementRecordsView({ records, academicSkills, notice, uploading, onAdd, onUpdate, onDelete, onUpload }: { records: AchievementRecord[]; academicSkills: string[]; notice: string | null; uploading: boolean; onAdd: (kind: AchievementRecordKind) => void; onUpdate: (id: string, patch: Partial<AchievementRecord>) => void; onDelete: (id: string) => void; onUpload: (recordId: string, file: File) => Promise<void> }) {
+  const statusTone: Record<AchievementRecordStatus, string> = { planning: "border-[#8095bc] bg-[#243955] text-[#dbe8ff]", "in-progress": "border-[#c49dff] bg-[#4a3674] text-[#eee0ff]", earned: "border-[#74e2b1] bg-[#225246] text-[#d5ffe7]", completed: "border-[#f4c659] bg-[#5b4a22] text-[#fff0b6]" };
+  const totalEvidence = records.reduce((sum, record) => sum + record.evidence.length, 0);
+  const suggestions = [
+    !records.some(record => record.kind === "certificate" && ["earned", "completed"].includes(record.status)) ? "先建立一項最想取得的證照，填入目標日期與準備範圍，讓它成為下一個可追蹤的里程碑。" : "為已取得的證照補上證書圖片與可公開查驗連結，讓作品集更完整。",
+    !records.some(record => record.kind === "competition") ? "若想累積可展示成果，可先建立一個想參加的比賽紀錄，寫下主題、截止日與預計作品。" : "為正在進行的比賽至少加入一筆進度紀錄與一張成果圖，日後整理作品集會更有效率。",
+    academicSkills.length ? `你目前的學業能力標籤包含「${academicSkills.slice(0, 3).join("、")}」，可優先選擇能讓這些能力產出可展示作品的證照或比賽。` : "先把已修課程與職涯方向補齊，系統便能給出更貼近你能力背景的成果建議。",
+  ];
+  return <div className="space-y-4 animate-pop-in"><Panel gold className="overflow-hidden"><div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1fr)_auto]"><div><p className="pixel-font text-[8px] text-[#f4c659]">PERSONAL EVIDENCE VAULT</p><h2 className="mt-2 text-2xl font-black text-[#fff8df]">證照與比賽紀錄</h2><p className="mt-3 max-w-3xl text-sm leading-7 text-[#c9d7ee]">集中保存你的證照、競賽、參與成果與準備歷程。圖片與影片會存入私人附件空間，只有本人登入後才可開啟；外部連結則建議只放你願意公開的網址。</p></div><div className="grid grid-cols-2 gap-2 self-end"><SmallMetric label="成果紀錄" value={`${records.length}`} /><SmallMetric label="附件數" value={`${totalEvidence}`} /></div></div></Panel><div className="grid gap-4 lg:grid-cols-3">{suggestions.map((suggestion, index) => <Panel key={suggestion} className="p-4"><p className="pixel-font text-[8px] text-[#f4c659]">NEXT STEP {index + 1}</p><p className="mt-2 text-sm leading-6 text-[#d5e1f5]">{suggestion}</p></Panel>)}</div><Panel className="overflow-hidden"><PanelTitle eyebrow="ADD AN ACHIEVEMENT" title="建立你的成果紀錄" action={<Trophy className="text-[#f4c659]" />} /><div className="flex flex-wrap gap-3 p-5"><PixelButton onClick={() => onAdd("certificate")} className="bg-[#f4c659] text-[#152544]"><Plus size={16} /> 新增證照</PixelButton><PixelButton onClick={() => onAdd("competition")} className="bg-[#5a48b9]"><Plus size={16} /> 新增比賽</PixelButton></div></Panel>{notice && <p className="border-l-4 border-[#74e2b1] bg-[#173f3b] px-4 py-3 text-sm text-[#d7ffe9]">{notice}</p>}{records.length === 0 ? <Panel><EmptyState icon={<Trophy />} title="建立第一份可展示的成果" detail="可以從正在準備的證照、想參加的比賽，或已完成但尚未整理的成果開始。" action={() => onAdd("certificate")} /></Panel> : <div className="grid gap-4 xl:grid-cols-2">{records.map(record => <AchievementRecordCard key={record.id} record={record} statusTone={statusTone} uploading={uploading} onUpdate={onUpdate} onDelete={onDelete} onUpload={onUpload} />)}</div>}</div>;
+}
+
+function AchievementRecordCard({ record, statusTone, uploading, onUpdate, onDelete, onUpload }: { record: AchievementRecord; statusTone: Record<AchievementRecordStatus, string>; uploading: boolean; onUpdate: (id: string, patch: Partial<AchievementRecord>) => void; onDelete: (id: string) => void; onUpload: (recordId: string, file: File) => Promise<void> }) {
+  const [linkValue, setLinkValue] = useState("");
+  const updateSkills = (value: string) => onUpdate(record.id, { skills: Array.from(new Set(value.split(/[，,]/).map(skill => skill.trim()).filter(Boolean))) });
+  const addLink = () => {
+    try {
+      const url = new URL(linkValue);
+      if (!/^https?:$/.test(url.protocol)) throw new Error();
+      const evidence: AchievementEvidence = { id: crypto.randomUUID(), name: url.hostname, kind: "link", externalUrl: url.toString(), createdAt: new Date().toISOString() };
+      onUpdate(record.id, { evidence: [...record.evidence, evidence] });
+      setLinkValue("");
+    } catch { setLinkValue(""); }
+  };
+  const removeEvidence = (evidenceId: string) => onUpdate(record.id, { evidence: record.evidence.filter(evidence => evidence.id !== evidenceId) });
+  return <Panel className="overflow-hidden"><div className="flex items-start justify-between gap-3 border-b-2 border-[#4b638f] p-4"><div className="flex min-w-0 items-center gap-3"><span className={`grid h-10 w-10 shrink-0 place-items-center border-2 ${record.kind === "certificate" ? "border-[#f4c659] bg-[#594a28] text-[#ffe797]" : "border-[#aa98ff] bg-[#443c7d] text-[#e5dfff]"}`}><Trophy size={19} /></span><div><p className="pixel-font text-[8px] text-[#9fb5d8]">{achievementRecordKindLabel[record.kind]}</p><input value={record.title} onChange={event => onUpdate(record.id, { title: event.target.value })} aria-label="成果名稱" className="mt-1 w-full bg-transparent text-lg font-black text-[#fff8df] outline-none placeholder:text-[#7388ad]" placeholder="輸入名稱" /></div></div><button onClick={() => onDelete(record.id)} className="p-2 text-[#adbfdf] hover:text-[#f28682]" aria-label={`刪除 ${record.title}`}><Trash2 size={18} /></button></div><div className="space-y-4 p-4"><div className="grid gap-3 sm:grid-cols-2"><Field label="狀態"><select value={record.status} onChange={event => onUpdate(record.id, { status: event.target.value as AchievementRecordStatus })} className={`pixel-input w-full px-3 py-2 font-bold ${statusTone[record.status]}`}>{Object.entries(achievementRecordStatusLabel).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field><Field label="主辦單位"><input value={record.organizer ?? ""} onChange={event => onUpdate(record.id, { organizer: event.target.value || undefined })} placeholder="例如：主辦單位名稱" className="pixel-input w-full px-3 py-2" /></Field><Field label="目標／截止日期"><input type="date" value={record.targetDate ?? ""} onChange={event => onUpdate(record.id, { targetDate: event.target.value || undefined })} className="pixel-input w-full px-3 py-2" /></Field><Field label="取得／完成日期"><input type="date" value={record.achievedDate ?? ""} onChange={event => onUpdate(record.id, { achievedDate: event.target.value || undefined })} className="pixel-input w-full px-3 py-2" /></Field></div><Field label="內容與準備紀錄"><textarea rows={3} value={record.description ?? ""} onChange={event => onUpdate(record.id, { description: event.target.value || undefined })} placeholder="記錄考試範圍、比賽主題、準備方式或作品內容…" className="pixel-input w-full resize-y px-3 py-2" /></Field><Field label="成果／名次／反思"><textarea rows={2} value={record.result ?? ""} onChange={event => onUpdate(record.id, { result: event.target.value || undefined })} placeholder="例如：成績、名次、心得或可公開的成果說明…" className="pixel-input w-full resize-y px-3 py-2" /></Field><Field label="能力標籤（以逗號分隔）"><input value={record.skills.join("、")} onChange={event => updateSkills(event.target.value)} placeholder="例如：Python、資料分析、簡報" className="pixel-input w-full px-3 py-2" /></Field><div className="border-t-2 border-[#415b84] pt-4"><p className="pixel-font text-[8px] text-[#93a7cb]">PRIVATE EVIDENCE</p><p className="mt-1 text-xs leading-5 text-[#b9cbe6]">上傳圖片或影片（每個檔案最多 20 MB），或新增公開作品連結。移除附件會讓它不再被私人頁面引用。</p><div className="mt-3 flex flex-wrap gap-2"><label className="pixel-button pixel-corners inline-flex cursor-pointer items-center gap-2 bg-[#245d58] px-3 py-2 text-sm font-bold text-[#e1fff6]"><FileText size={15} /> {uploading ? "上傳中…" : "上傳圖片／影片"}<input disabled={uploading} type="file" accept="image/*,video/*" className="hidden" onChange={event => { const file = event.target.files?.[0]; if (file) void onUpload(record.id, file); event.currentTarget.value = ""; }} /></label><div className="flex min-w-56 flex-1 gap-2"><input type="url" value={linkValue} onChange={event => setLinkValue(event.target.value)} placeholder="貼上作品或影片網址" className="pixel-input min-w-0 flex-1 px-3 py-2 text-sm" /><PixelButton onClick={addLink} disabled={!linkValue.trim()} className="bg-[#344e78] px-3 disabled:opacity-50">新增連結</PixelButton></div></div>{record.evidence.length > 0 && <div className="mt-4 grid gap-3 sm:grid-cols-2">{record.evidence.map(evidence => <article key={evidence.id} className="overflow-hidden border-2 border-[#48628d] bg-[#172a47]"><div className="aspect-video bg-[#0d1830]">{evidence.kind === "image" && evidence.storageKey ? <img src={`/api/private-media/${evidence.id}`} alt={evidence.name} className="h-full w-full object-cover" /> : evidence.kind === "video" && evidence.storageKey ? <video controls className="h-full w-full" src={`/api/private-media/${evidence.id}`} /> : <div className="grid h-full place-items-center p-4 text-center"><a href={evidence.externalUrl} target="_blank" rel="noreferrer" className="font-bold text-[#a8cdfd] underline">開啟：{evidence.name}</a></div>}</div><div className="flex items-center justify-between gap-2 p-2"><span className="truncate text-xs font-bold text-[#d8e5fb]">{evidence.name}</span><button onClick={() => removeEvidence(evidence.id)} className="shrink-0 text-xs text-[#b9c9e2] hover:text-[#f28682]">移除</button></div></article>)}</div>}</div></div></Panel>;
 }
 
 function ProjectsView({ projects, projectForm, editingProjectId, setProjectForm, onOpen, onSave, onCancel, onDelete }: { projects: ProjectRecord[]; projectForm: Omit<ProjectRecord, "id"> | null; editingProjectId: string | null; setProjectForm: React.Dispatch<React.SetStateAction<Omit<ProjectRecord, "id"> | null>>; onOpen: (project?: ProjectRecord) => void; onSave: () => void; onCancel: () => void; onDelete: (id: string) => void }) {

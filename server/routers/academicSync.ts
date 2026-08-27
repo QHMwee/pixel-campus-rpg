@@ -7,6 +7,9 @@ const letterGrade = z.enum(["A+", "A", "A-", "B+", "B", "B-", "C+", "C", "C-", "
 const recognition = z.enum(["standard", "approved-external", "pending", "gpa-only"]);
 const workspaceTaskStatus = z.enum(["needs-review", "not-started", "active", "done", "deferred", "blocked"]);
 const workspaceProjectStatus = z.enum(["planning", "active", "done", "paused"]);
+const achievementRecordKind = z.enum(["certificate", "competition"]);
+const achievementRecordStatus = z.enum(["planning", "in-progress", "earned", "completed"]);
+const achievementMediaKind = z.enum(["image", "video", "link"]);
 const workspaceMemberSchema = z.object({ id: z.string().min(1).max(120), name: z.string().min(1).max(160), role: z.string().min(1).max(160) });
 const dailyProjectLogSchema = z.object({
   id: z.string().min(1).max(160), date: z.string().min(1).max(40), completedTaskIds: z.array(z.string().max(160)).max(1_000),
@@ -19,6 +22,14 @@ const workspaceTaskSchema = z.object({
 const workspaceProjectSchema = z.object({
   id: z.string().min(1).max(160), name: z.string().min(1).max(240), description: z.string().max(20_000), status: workspaceProjectStatus,
   source: z.object({ provider: z.literal("notion"), url: z.string().url().max(2_000), label: z.string().max(300), importedAt: z.string().max(40) }), tags: z.array(z.string().max(80)).max(40), members: z.array(workspaceMemberSchema).max(50), tasks: z.array(workspaceTaskSchema).max(1_000), dailyLogs: z.array(dailyProjectLogSchema).max(2_000).default([]),
+});
+const achievementEvidenceSchema = z.object({
+  id: z.string().min(1).max(160), name: z.string().min(1).max(300), kind: achievementMediaKind,
+  storageKey: z.string().min(1).max(1_000).optional(), externalUrl: z.string().url().max(2_000).optional(), mimeType: z.string().max(160).optional(), createdAt: z.string().min(1).max(40),
+}).refine(evidence => Boolean(evidence.storageKey || evidence.externalUrl), { message: "附件必須包含私人檔案或外部連結" });
+const achievementRecordSchema = z.object({
+  id: z.string().min(1).max(160), kind: achievementRecordKind, title: z.string().min(1).max(300), organizer: z.string().max(300).optional(), status: achievementRecordStatus,
+  targetDate: z.string().max(40).optional(), achievedDate: z.string().max(40).optional(), description: z.string().max(10_000).optional(), result: z.string().max(5_000).optional(), skills: z.array(z.string().min(1).max(80)).max(50), evidence: z.array(achievementEvidenceSchema).max(100), createdAt: z.string().min(1).max(40), updatedAt: z.string().min(1).max(40),
 });
 
 export const academicSyncPayloadSchema = z.object({
@@ -39,6 +50,7 @@ export const academicSyncPayloadSchema = z.object({
   termRanks: z.record(z.string().max(80), z.object({ rank: z.number().int().min(1).max(100_000), cohortSize: z.number().int().min(1).max(100_000) })).default({}),
   hasCompletedPlanIntro: z.boolean(),
   workspaces: z.array(workspaceProjectSchema).max(50).default([]),
+  achievementRecords: z.array(achievementRecordSchema).max(500).default([]),
 });
 
 function parsePayload(payload: string) {

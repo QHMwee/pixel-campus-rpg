@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { academicSyncStates, InsertUser, users } from "../drizzle/schema";
+import { academicSyncStates, InsertUser, privateAchievementMedia, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -126,6 +126,21 @@ export async function updatePrivateAcademicSyncState(ownerId: number, baseRevisi
     .where(and(eq(academicSyncStates.ownerId, ownerId), eq(academicSyncStates.revision, baseRevision)));
   if (result[0].affectedRows !== 1) return null;
   return await getPrivateAcademicSyncState(ownerId);
+}
+
+export async function createPrivateAchievementMedia(input: { id: string; ownerId: number; storageKey: string; fileName: string; mimeType: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("私人附件資料庫暫時無法使用。");
+  await db.insert(privateAchievementMedia).values(input);
+  return input;
+}
+
+export async function getPrivateAchievementMedia(ownerId: number, id: string) {
+  const db = await getDb();
+  if (!db) throw new Error("私人附件資料庫暫時無法使用。");
+  const rows = await db.select().from(privateAchievementMedia)
+    .where(and(eq(privateAchievementMedia.ownerId, ownerId), eq(privateAchievementMedia.id, id))).limit(1);
+  return rows[0] ?? null;
 }
 
 // TODO: add feature queries here as your app grows.

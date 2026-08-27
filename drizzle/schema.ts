@@ -1,4 +1,4 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
+import { index, int, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -34,8 +34,21 @@ export const academicSyncStates = mysqlTable("academic_sync_states", {
   uniqueIndex("academic_sync_states_owner_unique").on(table.ownerId),
 ]);
 
+/** Private evidence objects for certificates and competitions. Only the owning account may resolve a storage key. */
+export const privateAchievementMedia = mysqlTable("private_achievement_media", {
+  id: varchar("id", { length: 160 }).primaryKey(),
+  ownerId: int("ownerId").notNull(),
+  storageKey: varchar("storageKey", { length: 1_000 }).notNull(),
+  fileName: varchar("fileName", { length: 300 }).notNull(),
+  mimeType: varchar("mimeType", { length: 160 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  index("private_achievement_media_owner_idx").on(table.ownerId),
+]);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type AcademicSyncState = typeof academicSyncStates.$inferSelect;
+export type PrivateAchievementMedia = typeof privateAchievementMedia.$inferSelect;
 
 // TODO: Add your tables here

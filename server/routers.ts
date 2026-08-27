@@ -4,6 +4,7 @@ import { systemRouter } from "./_core/systemRouter";
 import { adminProcedure, publicProcedure, router } from "./_core/trpc";
 import { aiPlannerRouter } from "./routers/aiPlanner";
 import { academicSyncRouter } from "./routers/academicSync";
+import { achievementMediaRouter } from "./routers/achievementMedia";
 import { transcriptPdfRouter } from "./routers/transcriptPdf";
 
 export const appRouter = router({
@@ -11,6 +12,7 @@ export const appRouter = router({
   system: systemRouter,
   aiPlanner: aiPlannerRouter,
   academicSync: academicSyncRouter,
+  achievementMedia: achievementMediaRouter,
   transcriptPdf: transcriptPdfRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
