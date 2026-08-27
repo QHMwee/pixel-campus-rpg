@@ -192,7 +192,7 @@ function normalizeQuestData(parsed: Partial<QuestData>): QuestData {
     plannedCourses: Array.isArray(parsed.plannedCourses) ? parsed.plannedCourses.filter((course): course is PlannedCourse => Boolean(course && typeof course.name === "string" && typeof course.term === "string" && Number.isFinite(course.credits) && (course.category === "required" || course.category === "elective" || course.category === "general" || course.category === "common" || course.category === "undeclared-required") && (course.priority === "must" || course.priority === "important" || course.priority === "explore"))) : [],
     termRanks: normalizeTermRanks(parsed.termRanks),
     hasCompletedPlanIntro: Boolean(parsed.hasCompletedPlanIntro),
-    workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter(isWorkspaceProject) : [],
+    workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.filter(isWorkspaceProject).map(project => ({ ...project, members: [], dailyLogs: Array.isArray(project.dailyLogs) ? project.dailyLogs : [] })) : [],
   };
 }
 
@@ -206,7 +206,7 @@ function loadData(): QuestData {
 }
 
 function hasQuestData(data: QuestData) {
-  return data.courses.length > 0 || data.projects.length > 0 || data.plannedCourses.length > 0 || Object.keys(data.termRanks).length > 0 || data.hasCompletedPlanIntro;
+  return data.courses.length > 0 || data.projects.length > 0 || data.plannedCourses.length > 0 || data.workspaces.length > 0 || Object.keys(data.termRanks).length > 0 || data.hasCompletedPlanIntro;
 }
 
 function courseMergeKey(course: Pick<CourseRecord, "term" | "name">) {
@@ -1178,6 +1178,40 @@ function ProjectsView({ projects, projectForm, editingProjectId, setProjectForm,
 }
 
 function NotionProjectWorkspace({ workspaces, onUpdate }: { workspaces: WorkspaceProject[]; onUpdate: (projectId: string, update: (project: WorkspaceProject) => WorkspaceProject) => void }) {
+  const [activeDate, setActiveDate] = useState(() => new Date().toISOString().slice(0, 10));
+  if (!workspaces.length) return null;
+
+  function updateDailyLog(project: WorkspaceProject, patch: (current: { id: string; date: string; completedTaskIds: string[]; minutes?: number; note?: string }) => { id: string; date: string; completedTaskIds: string[]; minutes?: number; note?: string }, taskPatch?: { id: string; checked: boolean }) {
+    onUpdate(project.id, current => {
+      const existing = current.dailyLogs ?? [];
+      const currentLog = existing.find(log => log.date === activeDate) ?? { id: crypto.randomUUID(), date: activeDate, completedTaskIds: [] };
+      const nextLog = patch(currentLog);
+      const dailyLogs = [...existing.filter(log => log.date !== activeDate), nextLog].sort((a, b) => b.date.localeCompare(a.date));
+      const tasks = taskPatch ? current.tasks.map(task => task.id !== taskPatch.id ? task : { ...task, status: (taskPatch.checked ? "done" : task.status === "done" ? "not-started" : task.status) as WorkspaceTaskStatus }) : current.tasks;
+      return { ...current, members: [], dailyLogs, tasks };
+    });
+  }
+
+  return <Panel className="mt-4 overflow-hidden" gold>
+    <PanelTitle eyebrow="SOLO PROJECT QUEST" title="個人專案日誌" action={<button onClick={() => window.open(workspaces[0].source.url, "_blank", "noopener,noreferrer")} className="border-2 border-[#647aa2] bg-[#263b5d] px-3 py-2 text-xs font-black text-[#dce9ff] hover:border-[#f4c659] hover:text-[#fff0ba]">開啟 Notion 原始計畫</button>} />
+    <div className="space-y-5 p-5">
+      <p className="border-l-4 border-[#74e2b1] bg-[#173c3a] px-3 py-2 text-xs leading-6 text-[#d5f9e6]">這是你的個人開發基地：不需要分配職務或人員。每天選日期、勾選完成工作，再記下投入時間與開發心得；所有調整會自動同步到你的私人資料。</p>
+      {workspaces.map(project => {
+        const dailyLogs = project.dailyLogs ?? [];
+        const todayLog = dailyLogs.find(log => log.date === activeDate) ?? { id: "draft", date: activeDate, completedTaskIds: [] };
+        const completedCount = project.tasks.filter(task => task.status === "done").length;
+        const progress = project.tasks.length ? Math.round((completedCount / project.tasks.length) * 100) : 0;
+        const phaseStats = Array.from(new Map(project.tasks.map(task => [task.phase, project.tasks.filter(item => item.phase === task.phase)])).entries());
+        return <section key={project.id} className="border-3 border-[#536994] bg-[#14233e] shadow-[3px_3px_0_#080d1f]">
+          <div className="border-b-2 border-[#40567e] p-4"><div className="flex flex-wrap items-start gap-4"><div className="grid h-24 w-24 shrink-0 place-items-center rounded-full border-4 border-[#7891bd] p-2" style={{ background: `conic-gradient(#f4c659 ${progress * 3.6}deg, #263b5e 0deg)` }}><div className="grid h-full w-full place-items-center rounded-full bg-[#152645] text-center"><span className="text-xl font-black text-[#fff2be]">{progress}%</span><span className="pixel-font text-[7px] text-[#9eb5da]">COMPLETE</span></div></div><div className="min-w-0 flex-1"><p className="pixel-font text-[8px] text-[#f4c659]">SOLO DEVELOPMENT QUEST</p><h3 className="mt-2 text-xl font-black text-[#fff8df]">{project.name}</h3><p className="mt-2 max-w-3xl text-sm leading-6 text-[#c1d1ea]">{project.description}</p><div className="mt-3 flex flex-wrap gap-2">{project.tags.map(tag => <span key={tag} className="border border-[#6079a4] bg-[#243a5e] px-2 py-1 text-xs font-bold text-[#d9e7ff]">#{tag}</span>)}</div></div><div className="ml-auto grid min-w-24 grid-cols-1 gap-2 text-center"><div className="border-2 border-[#526b97] bg-[#1d3154] px-3 py-2"><p className="pixel-font text-[7px] text-[#9ab0d3]">DONE QUESTS</p><p className="mt-1 text-lg font-black text-[#74e2b1]">{completedCount}<span className="text-xs text-[#b5c6e4]">/{project.tasks.length}</span></p></div><div className="border-2 border-[#526b97] bg-[#1d3154] px-3 py-2"><p className="pixel-font text-[7px] text-[#9ab0d3]">LOG DAYS</p><p className="mt-1 text-lg font-black text-[#f4c659]">{dailyLogs.length}</p></div></div></div></div>
+          <div className="grid gap-5 p-4 xl:grid-cols-[minmax(0,1fr)_320px]"><div className="space-y-4"><div className="border-2 border-[#48628d] bg-[#172a47] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="pixel-font text-[8px] text-[#93a7cb]">DAILY CHECKLIST</p><h4 className="mt-1 font-black text-[#fff8df]">今日／指定日期的開發紀錄</h4></div><input type="date" value={activeDate} onChange={event => setActiveDate(event.target.value)} className="pixel-input px-3 py-2 text-sm" /></div><div className="mt-4 space-y-2">{project.tasks.map(task => { const checked = todayLog.completedTaskIds.includes(task.id); return <label key={task.id} className={`flex cursor-pointer items-start gap-3 border-2 p-3 transition-colors ${checked ? "border-[#4eaa80] bg-[#1c4a40]" : "border-[#405a83] bg-[#1a2e4d] hover:border-[#718ab5]"}`}><input type="checkbox" checked={checked} onChange={event => updateDailyLog(project, current => ({ ...current, completedTaskIds: event.target.checked ? [...current.completedTaskIds, task.id] : current.completedTaskIds.filter(id => id !== task.id) }), { id: task.id, checked: event.target.checked })} className="mt-1 h-4 w-4 accent-[#74e2b1]" /><span className="min-w-0 flex-1"><span className={`block font-bold ${checked ? "text-[#d9ffe9] line-through" : "text-[#fff8df]"}`}>{task.title}</span><span className="mt-1 block text-xs text-[#aec2e0]">{task.phase} · {task.scheduleLabel || "未排程"}</span></span>{task.status === "done" && <span className="pixel-font mt-1 text-[7px] text-[#74e2b1]">DONE</span>}</label>; })}</div><div className="mt-4 grid gap-3 sm:grid-cols-[130px_minmax(0,1fr)]"><Field label="投入時間（分）"><input type="number" min="0" value={todayLog.minutes ?? ""} onChange={event => updateDailyLog(project, current => ({ ...current, minutes: event.target.value ? Number(event.target.value) : undefined }))} placeholder="例如 90" className="pixel-input w-full px-3 py-2" /></Field><Field label="今日開發紀錄"><textarea rows={2} value={todayLog.note ?? ""} onChange={event => updateDailyLog(project, current => ({ ...current, note: event.target.value || undefined }))} placeholder="記下完成內容、遇到的問題或下一步…" className="pixel-input w-full resize-y px-3 py-2" /></Field></div></div><div className="border-2 border-[#48628d] bg-[#172a47] p-4"><p className="pixel-font text-[8px] text-[#93a7cb]">QUEST PROGRESS MAP</p><div className="mt-3 space-y-3">{phaseStats.map(([phase, tasks]) => { const done = tasks.filter(task => task.status === "done").length; const percent = tasks.length ? Math.round((done / tasks.length) * 100) : 0; return <div key={phase}><div className="mb-1 flex justify-between gap-3 text-xs font-bold text-[#d7e5ff]"><span>{phase}</span><span className="text-[#f4c659]">{done}/{tasks.length}</span></div><div className="h-3 border border-[#526a96] bg-[#0e1b31]"><div className="h-full bg-[#74e2b1] transition-[width] duration-200" style={{ width: `${percent}%` }} /></div></div>; })}</div></div></div><aside className="border-2 border-[#48628d] bg-[#172a47] p-4"><p className="pixel-font text-[8px] text-[#93a7cb]">DEVELOPMENT LOG</p><h4 className="mt-1 font-black text-[#fff8df]">近期開發紀錄</h4>{dailyLogs.length ? <div className="mt-4 space-y-3">{dailyLogs.slice(0, 8).map(log => <article key={log.id} className="border-l-4 border-[#f4c659] bg-[#1d3153] p-3"><div className="flex items-center justify-between gap-2"><span className="font-black text-[#fff4c8]">{log.date}</span>{log.minutes !== undefined && <span className="text-xs font-bold text-[#74e2b1]">{log.minutes} 分</span>}</div><p className="mt-2 text-xs text-[#b9cce8]">完成 {log.completedTaskIds.length} 項工作</p>{log.note && <p className="mt-2 text-xs leading-5 text-[#d7e6fc]">{log.note}</p>}</article>)}</div> : <p className="mt-4 border-l-4 border-[#657ea9] pl-3 text-sm leading-6 text-[#aec2e0]">尚未寫下日誌。選擇日期並勾選今天完成的工作，即會建立第一筆紀錄。</p>}</aside></div>
+        </section>;
+      })}
+    </div>
+  </Panel>;
+}
+
+function LegacyNotionProjectWorkspace({ workspaces, onUpdate }: { workspaces: WorkspaceProject[]; onUpdate: (projectId: string, update: (project: WorkspaceProject) => WorkspaceProject) => void }) {
   if (!workspaces.length) return null;
   const taskStatusTone: Record<WorkspaceTaskStatus, string> = { "needs-review": "bg-[#5c4c26] text-[#ffe797]", "not-started": "bg-[#40577f] text-[#d7e5ff]", active: "bg-[#5648b8] text-[#eeeaff]", done: "bg-[#23634f] text-[#d8ffe9]", deferred: "bg-[#684c83] text-[#f0dcff]", blocked: "bg-[#7a3740] text-[#ffe0df]" };
   return <Panel className="mt-4 overflow-hidden" gold>

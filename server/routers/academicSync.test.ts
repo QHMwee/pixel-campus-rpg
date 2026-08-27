@@ -19,6 +19,20 @@ describe("academicSync private contract", () => {
     expect(parsed.workspaces[0]?.source.provider).toBe("notion");
   });
 
+  it("migrates a legacy workspace without daily logs to an empty personal journal", () => {
+    const legacyWorkspace = createMedievalGuildWorkspaceProject();
+    delete legacyWorkspace.dailyLogs;
+    const parsed = academicSyncPayloadSchema.parse({ ...payload, workspaces: [legacyWorkspace] });
+    expect(parsed.workspaces[0]?.dailyLogs).toEqual([]);
+  });
+
+  it("preserves an individual daily checklist and development note", () => {
+    const workspace = createMedievalGuildWorkspaceProject();
+    workspace.dailyLogs = [{ id: "log-1", date: "2026-08-20", completedTaskIds: ["daily-0723"], minutes: 90, note: "完成羊皮紙任務卡調整" }];
+    const parsed = academicSyncPayloadSchema.parse({ ...payload, workspaces: [workspace] });
+    expect(parsed.workspaces[0]?.dailyLogs[0]).toMatchObject({ completedTaskIds: ["daily-0723"], minutes: 90 });
+  });
+
   it("rejects data outside the private academic contract", () => {
     expect(() => academicSyncPayloadSchema.parse({ ...payload, system: "4.0" })).toThrow();
     expect(() => academicSyncPayloadSchema.parse({ ...payload, courses: [{ id: "c", term: "114-1", name: "課程", credits: 3, grade: "Z", category: "required" }] })).toThrow();

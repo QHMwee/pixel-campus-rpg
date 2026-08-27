@@ -2,6 +2,13 @@ export type WorkspaceProjectStatus = "planning" | "active" | "done" | "paused";
 export type WorkspaceTaskStatus = "needs-review" | "not-started" | "active" | "done" | "deferred" | "blocked";
 
 export type WorkspaceMember = { id: string; name: string; role: string };
+export type DailyProjectLog = {
+  id: string;
+  date: string;
+  completedTaskIds: string[];
+  minutes?: number;
+  note?: string;
+};
 export type WorkspaceTask = {
   id: string;
   title: string;
@@ -25,6 +32,7 @@ export type WorkspaceProject = {
   tags: string[];
   members: WorkspaceMember[];
   tasks: WorkspaceTask[];
+  dailyLogs?: DailyProjectLog[];
 };
 
 export const workspaceTaskStatusLabel: Record<WorkspaceTaskStatus, string> = {
@@ -45,6 +53,7 @@ export const medievalGuildWorkspaceProject: WorkspaceProject = {
     { id: "testing", name: "待指定", role: "測試人員" },
     { id: "audio", name: "待指定", role: "音效設計師／開發者" },
   ],
+  dailyLogs: [],
   tasks: [
     { id: "phase-concept", title: "概念與規劃", description: "需求分析、競品研究、UI/UX 線框與技術架構規劃。", phase: "第一階段", scheduleLabel: "Notion 階段規劃", assigneeIds: ["product", "design", "development"], status: "needs-review" },
     { id: "phase-core", title: "基礎架構開發", description: "建立 Flutter、Provider、任務與玩家狀態的持久化及核心遊戲化邏輯。", phase: "第二階段", scheduleLabel: "Notion 階段規劃", assigneeIds: ["development"], status: "needs-review" },

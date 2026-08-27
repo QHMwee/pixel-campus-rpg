@@ -8,13 +8,17 @@ const recognition = z.enum(["standard", "approved-external", "pending", "gpa-onl
 const workspaceTaskStatus = z.enum(["needs-review", "not-started", "active", "done", "deferred", "blocked"]);
 const workspaceProjectStatus = z.enum(["planning", "active", "done", "paused"]);
 const workspaceMemberSchema = z.object({ id: z.string().min(1).max(120), name: z.string().min(1).max(160), role: z.string().min(1).max(160) });
+const dailyProjectLogSchema = z.object({
+  id: z.string().min(1).max(160), date: z.string().min(1).max(40), completedTaskIds: z.array(z.string().max(160)).max(1_000),
+  minutes: z.number().int().min(0).max(100_000).optional(), note: z.string().max(5_000).optional(),
+});
 const workspaceTaskSchema = z.object({
   id: z.string().min(1).max(160), title: z.string().min(1).max(240), description: z.string().max(10_000), phase: z.string().max(160), scheduleLabel: z.string().max(160), assigneeIds: z.array(z.string().max(120)).max(30), status: workspaceTaskStatus,
   estimatedMinutes: z.number().int().min(0).max(100_000).optional(), extensionMinutes: z.number().int().min(0).max(100_000).optional(), actualMinutes: z.number().int().min(0).max(100_000).optional(), note: z.string().max(5_000).optional(),
 });
 const workspaceProjectSchema = z.object({
   id: z.string().min(1).max(160), name: z.string().min(1).max(240), description: z.string().max(20_000), status: workspaceProjectStatus,
-  source: z.object({ provider: z.literal("notion"), url: z.string().url().max(2_000), label: z.string().max(300), importedAt: z.string().max(40) }), tags: z.array(z.string().max(80)).max(40), members: z.array(workspaceMemberSchema).max(50), tasks: z.array(workspaceTaskSchema).max(1_000),
+  source: z.object({ provider: z.literal("notion"), url: z.string().url().max(2_000), label: z.string().max(300), importedAt: z.string().max(40) }), tags: z.array(z.string().max(80)).max(40), members: z.array(workspaceMemberSchema).max(50), tasks: z.array(workspaceTaskSchema).max(1_000), dailyLogs: z.array(dailyProjectLogSchema).max(2_000).default([]),
 });
 
 export const academicSyncPayloadSchema = z.object({
