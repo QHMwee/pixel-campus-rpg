@@ -150,10 +150,18 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+// 靜態離線版不需要 Manus 的開發期外掛，載入它們只會讓輸出多出無用的程式碼。
+const isStaticBuild = process.env.VITE_STATIC_MODE === "1";
+
+const plugins = isStaticBuild
+  ? [react(), tailwindcss()]
+  : [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
 
 export default defineConfig({
   plugins,
+  // 部署到 GitHub Pages 的子路徑（例如 /pixel-campus-rpg/）時，
+  // 用 VITE_BASE_PATH 指定；部署到自訂網域或根目錄則留空。
+  base: process.env.VITE_BASE_PATH || "/",
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "client", "src"),

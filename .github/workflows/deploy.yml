@@ -1,0 +1,62 @@
+# 自動部署到 GitHub Pages。
+# push 到 main 之後約 1–2 分鐘，手機上的 app 就會更新。
+name: Deploy static app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm test
+
+      - name: Build static app
+        # VITE_BASE_PATH 讓資源在 GitHub Pages 的子路徑下也能正確載入。
+        # 之後若改用自訂網域，把這一行改成 VITE_BASE_PATH: /
+        env:
+          VITE_STATIC_MODE: "1"
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+        run: pnpm build:static
+
+      - name: Add SPA fallback
+        # GitHub Pages 沒有伺服器端路由，404.html 讓深層網址也能回到 app。
+        run: cp dist/public/index.html dist/public/404.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/public
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

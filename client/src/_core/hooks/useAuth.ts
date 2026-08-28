@@ -1,4 +1,5 @@
 import { startLogin } from "@/const";
+import { IS_STATIC_MODE, STATIC_MODE_USER } from "@/staticMode";
 import { trpc } from "@/lib/trpc";
 import { TRPCClientError } from "@trpc/client";
 import { useCallback, useEffect, useMemo } from "react";
@@ -16,9 +17,11 @@ export function useAuth(options?: UseAuthOptions) {
   const { redirectOnUnauthenticated = false, redirectPath } = options ?? {};
   const utils = trpc.useUtils();
 
+  // 靜態模式沒有後端，這個查詢不能送出去，否則會一直失敗並觸發登入導向。
   const meQuery = trpc.auth.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
+    enabled: !IS_STATIC_MODE,
   });
 
   const logoutMutation = trpc.auth.logout.useMutation({
@@ -51,6 +54,14 @@ export function useAuth(options?: UseAuthOptions) {
   }, [logoutMutation, utils]);
 
   const state = useMemo(() => {
+    if (IS_STATIC_MODE) {
+      return {
+        user: STATIC_MODE_USER as unknown as NonNullable<typeof meQuery.data>,
+        loading: false,
+        error: null,
+        isAuthenticated: true,
+      };
+    }
     localStorage.setItem(
       "manus-runtime-user-info",
       JSON.stringify(meQuery.data)
@@ -70,6 +81,7 @@ export function useAuth(options?: UseAuthOptions) {
   ]);
 
   useEffect(() => {
+    if (IS_STATIC_MODE) return;
     if (!redirectOnUnauthenticated) return;
     if (meQuery.isLoading || logoutMutation.isPending) return;
     if (state.user) return;

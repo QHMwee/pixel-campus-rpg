@@ -6,11 +6,13 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { startLogin } from "./const";
+import { IS_STATIC_MODE } from "./staticMode";
 import "./index.css";
 
 const queryClient = new QueryClient();
 
 const redirectToLoginIfUnauthorized = (error: unknown) => {
+  if (IS_STATIC_MODE) return;
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
 
@@ -79,3 +81,14 @@ createRoot(document.getElementById("root")!).render(
     </QueryClientProvider>
   </trpc.Provider>
 );
+
+// 註冊 Service Worker：讓靜態版可以安裝到手機主畫面並完全離線使用。
+// 只在正式建置時註冊，開發時註冊會讓熱重載抓到舊快取。
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    const base = import.meta.env.BASE_URL || "/";
+    navigator.serviceWorker.register(`${base}sw.js`, { scope: base }).catch(error => {
+      console.warn("[PWA] Service Worker 註冊失敗：", error);
+    });
+  });
+}

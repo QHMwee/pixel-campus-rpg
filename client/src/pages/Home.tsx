@@ -31,6 +31,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { NkustTimetableImportDialog } from "@/components/NkustTimetableImportDialog";
 import { TranscriptImportDialogV2 } from "@/components/TranscriptImportDialog";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { CareerTreePanel } from "@/components/CareerTreePanel";
+import { IS_STATIC_MODE } from "@/staticMode";
+import { careerTracks, type CareerTrackId } from "@shared/careerTree";
 import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { decodeFragmentNumericScoreUpdate, decodeFragmentTranscriptImport, mergeFragmentNumericScoreUpdate, mergeFragmentTranscriptImport } from "@shared/fragmentImport";
@@ -119,6 +122,7 @@ type QuestData = {
   goals: GraduationGoals;
   system: "4.3";
   careerPath: CareerPath;
+  careerTrackId: CareerTrackId;
   preferences: RecommendationPreferences;
   plannedCourses: PlannedCourse[];
   termRanks: Record<string, TermRank>;
@@ -154,6 +158,7 @@ const initialGoals: GraduationGoals = defaultGraduationGoals;
 const emptyQuestData: QuestData = {
   ...createBlankAcademicStart(),
   careerPath: "frontend",
+  careerTrackId: "frontend",
   preferences: defaultRecommendationPreferences,
   goals: initialGoals,
   plannedCourses: [],
@@ -196,6 +201,7 @@ function normalizeQuestData(parsed: Partial<QuestData>): QuestData {
     goals: usesLegacyGenericGoals ? { ...ccee114GraduationGoals, semestersLeft: restoredGoals.semestersLeft } : restoredGoals,
     system: "4.3",
     careerPath: careerProfiles.some(profile => profile.id === parsed.careerPath) ? parsed.careerPath as CareerPath : "frontend",
+    careerTrackId: careerTracks.some(track => track.id === parsed.careerTrackId) ? parsed.careerTrackId as CareerTrackId : "frontend",
     preferences: {
       workload: parsed.preferences?.workload === "light" || parsed.preferences?.workload === "ambitious" ? parsed.preferences.workload : defaultRecommendationPreferences.workload,
       category: parsed.preferences?.category === "required" || parsed.preferences?.category === "elective" || parsed.preferences?.category === "general" ? parsed.preferences.category : defaultRecommendationPreferences.category,
@@ -1028,7 +1034,7 @@ function PrivateQuestContent() {
               return { ...current, termRanks };
             })} courseForm={courseForm} editingCourseId={editingCourseId} setCourseForm={setCourseForm} onOpen={openCourseEditor} onImport={() => setTranscriptOpen(true)} importReport={importReport} fragmentImportError={fragmentImportError} onSave={saveCourse} onCancel={() => { setCourseForm(null); setEditingCourseId(null); }} onDelete={id => setData(current => ({ ...current, courses: current.courses.filter(course => course.id !== id) }))} />}
             {activeView === "credits" && <><CreditPlanningSummary status={creditPlanStatus} /><CreditsView credits={credits} goals={data.goals} showEditor={showGoalEditor} setShowEditor={setShowGoalEditor} onGoalChange={updateGoals} onApplyCcee114Goals={applyCcee114Goals} /><CceeCommonEducationMap courses={data.courses} /><CreditRecognitionMapV2 courses={data.courses} /></>}
-            {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /><CareerRealityPanel recommendations={recommendations} /></>}
+            {activeView === "quest" && <><PreferenceControls preferences={recommendationPreferences} onChange={preferences => setData(current => ({ ...current, preferences }))} /><CareerQuestView recommendations={recommendations} careerPath={data.careerPath} onCareerPathChange={careerPath => setData(current => ({ ...current, careerPath }))} goals={data.goals} gpa={gpa} credits={credits} completedProjects={completedProjects} /><CareerRealityPanel recommendations={recommendations} /><div className="mt-4"><CareerTreePanel courses={data.courses} achievements={data.achievementRecords} plannedCourseNames={data.plannedCourses.map(course => course.name)} trackId={data.careerTrackId} onTrackChange={careerTrackId => setData(current => ({ ...current, careerTrackId }))} /></div></>}
             {activeView === "projects" && <><ProjectsView projects={data.projects} projectForm={projectForm} editingProjectId={editingProjectId} setProjectForm={setProjectForm} onOpen={openProjectEditor} onSave={saveProject} onCancel={() => { setProjectForm(null); setEditingProjectId(null); }} onDelete={id => setData(current => ({ ...current, projects: current.projects.filter(project => project.id !== id) }))} /><NotionProjectWorkspace workspaces={data.workspaces} onUpdate={updateWorkspace} /></>}
             {activeView === "exams" && <ExamWorkspaceView workspaces={data.examWorkspaces} onUpdate={updateExamWorkspace} syncing={examNotionSync.isPending} syncNotice={examSyncNotice} canSync={cloudSyncStatus === "ready"} onSync={() => { if (cloudSyncStatus !== "ready") { setExamSyncNotice("請先等待網站完成私人雲端同步，再追加到 Notion。"); return; } setExamSyncNotice(null); examNotionSync.mutate({ examWorkspaces: data.examWorkspaces }); }} />}
             {activeView === "achievements" && <AchievementRecordsView records={data.achievementRecords} academicSkills={academicSkills.map(skill => skill.name)} notice={achievementNotice} uploading={achievementMediaUpload.isPending} onAdd={addAchievementRecord} onUpdate={updateAchievementRecord} onDelete={id => setData(current => ({ ...current, achievementRecords: current.achievementRecords.filter(record => record.id !== id) }))} onUpload={uploadAchievementEvidence} />}
@@ -1052,7 +1058,10 @@ function PrivateAccessScreen({ title, description, action }: { title: string; de
 
 export default function Home() {
   const { user, loading, isAuthenticated, logout } = useAuth();
-  const ownerAccess = trpc.auth.ownerAccess.useQuery(undefined, { enabled: isAuthenticated, retry: false, refetchOnWindowFocus: false });
+  const ownerAccess = trpc.auth.ownerAccess.useQuery(undefined, { enabled: isAuthenticated && !IS_STATIC_MODE, retry: false, refetchOnWindowFocus: false });
+
+  // 靜態離線版沒有伺服器，資料只在這台裝置上，因此不做登入與擁有者檢查。
+  if (IS_STATIC_MODE) return <PrivateQuestContent />;
 
   if (loading || (isAuthenticated && ownerAccess.isLoading)) return <PrivateAccessScreen title="正在確認私人存取權限" description="請稍候，系統正在安全確認登入身分。" />;
   if (!isAuthenticated) return <PrivateAccessScreen title="這是你的私人學業基地" description="請使用擁有 Campus Quest 的本人帳號登入。登入後才會載入這台裝置上的本機學業資料。" action={{ label: "使用本人帳號登入", onClick: startLogin }} />;
