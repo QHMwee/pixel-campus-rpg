@@ -25,6 +25,7 @@ import {
   Trophy,
   WandSparkles,
   X,
+  QrCode,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -33,6 +34,7 @@ import { TranscriptImportDialogV2 } from "@/components/TranscriptImportDialog";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { CareerTreePanel } from "@/components/CareerTreePanel";
 import { IS_STATIC_MODE } from "@/staticMode";
+import { SyncQrDialog } from "@/components/SyncQrDialog";
 import { careerTracks, type CareerTrackId } from "@shared/careerTree";
 import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
@@ -377,6 +379,7 @@ function PrivateQuestContent() {
   const [projectForm, setProjectForm] = useState<Omit<ProjectRecord, "id"> | null>(null);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [showGoalEditor, setShowGoalEditor] = useState(false);
+  const [showSyncDialog, setShowSyncDialog] = useState(false);
   const [celebration, setCelebration] = useState<{ title: string; description: string; icon: string } | null>(null);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [transcriptText, setTranscriptText] = useState("");
@@ -669,6 +672,19 @@ function PrivateQuestContent() {
     } finally {
       if (backupFileInputRef.current) backupFileInputRef.current.value = "";
     }
+  }
+
+  function receiveSyncedData(incoming: Record<string, unknown>, exportedAt: string) {
+    // 走與匯入備份相同的路徑：先寫入 localStorage 再用 loadData() 正規化，
+    // 這樣舊版本或缺欄位的資料也會被補齊，不會讓畫面壞掉。
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(incoming));
+    const restored = loadData();
+    setData(restored);
+    setActiveView(restored.courses.length ? "grades" : "plan");
+    setBackupNotice(
+      `已從另一台裝置接收${exportedAt ? `（${new Date(exportedAt).toLocaleString("zh-TW")} 產生）` : ""}；資料只寫入這台裝置。`
+    );
+    setShowSyncDialog(false);
   }
 
   function addPlannedCourse() {
@@ -1014,6 +1030,7 @@ function PrivateQuestContent() {
               <input ref={backupFileInputRef} type="file" accept="application/json,.json" className="hidden" onChange={event => { void importLocalBackup(event.target.files?.[0]); }} />
               <button onClick={downloadLocalBackup} className="mt-2 block text-left text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#74e2b1]">下載私人備份（帶到手機）</button>
               <button onClick={() => backupFileInputRef.current?.click()} className="mt-2 block text-left text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#74e2b1]">匯入私人備份（手機資料）</button>
+              <button onClick={() => setShowSyncDialog(true)} className="mt-2 flex items-center gap-1.5 text-left text-xs font-bold text-[#f4c659] underline decoration-[#f4c659]/40 underline-offset-4 hover:text-[#ffe796]"><QrCode size={13} />用 QR 同步到另一台裝置</button>
               <button onClick={resetQuest} className="mt-2 text-xs font-bold text-[#b8c9ed] underline decoration-[#b8c9ed]/40 underline-offset-4 hover:text-[#f4c659]">清除本機資料，重新開始</button>
               {backupNotice && <p className="mt-3 border-l-2 border-[#74e2b1] pl-2 text-[11px] leading-5 text-[#c5f1dd]">{backupNotice}</p>}
             </div>
@@ -1048,7 +1065,8 @@ function PrivateQuestContent() {
         </div>
       </div>
 
-      {celebration && <AchievementCelebration achievement={celebration} onClose={() => setCelebration(null)} />}
+      {showSyncDialog && <SyncQrDialog data={data} onReceive={receiveSyncedData} onClose={() => setShowSyncDialog(false)} />}
+    {celebration && <AchievementCelebration achievement={celebration} onClose={() => setCelebration(null)} />}
       <TranscriptImportDialogV2 open={transcriptOpen} onOpenChange={setTranscriptOpen} text={transcriptText} preview={transcriptPreview} draft={transcriptDraft} onTextChange={text => { setTranscriptText(text); setTranscriptMapping({}); const preview = prepareTranscriptImport(text, data.courses); setTranscriptPreview(preview); setTranscriptDraft(preview.toImport); setPdfConversionNote(null); }} onFileChange={readTranscriptFile} onPdfChange={readTranscriptPdf} isPdfConverting={pdfConverter.isPending} pdfNote={pdfConversionNote} onDraftChange={updateTranscriptDraft} onDraftDelete={removeTranscriptDraftRow} onPreview={() => previewTranscript()} onConfirm={confirmTranscriptImport} />
       <NkustTimetableImportDialog open={nkustImportOpen} onOpenChange={setNkustImportOpen} text={nkustTimetableText} preview={nkustTimetablePreview} draft={nkustTimetableDraft} onTextChange={text => { setNkustTimetableText(text); const preview = prepareNkustTimetableImport(text, [...data.plannedCourses, ...data.courses.filter(course => getGradePoint(course.grade, "4.0") > 0)]); setNkustTimetablePreview(preview); setNkustTimetableDraft(preview.accepted); }} onFileChange={readNkustTimetableFile} onDownloadTemplate={() => downloadTextFile(buildNkustTimetableTemplate(), "nkust-timetable-template.csv", "text/csv")} onDraftChange={updateNkustTimetableDraft} onDraftDelete={removeNkustTimetableDraftRow} onPreview={() => previewNkustTimetable()} onConfirm={confirmNkustTimetableImport} />
       {transcriptOpen && transcriptPreview?.needsMapping && <TranscriptMappingWizard open headers={transcriptPreview.headers ?? []} sample={transcriptPreview.sample ?? []} mapping={transcriptMapping} onChange={setTranscriptMapping} onApply={() => previewTranscript(transcriptText, transcriptMapping)} onClose={() => setTranscriptPreview(null)} />}
