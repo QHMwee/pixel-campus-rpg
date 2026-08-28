@@ -20,15 +20,15 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
+      # 不指定 version：交給 package.json 的 packageManager 欄位決定，
+      # 兩邊都寫會觸發 ERR_PNPM_BAD_PM_VERSION。
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
