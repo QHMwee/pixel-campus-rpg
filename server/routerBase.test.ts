@@ -47,3 +47,36 @@ describe("router base for subpath deployment", () => {
     expect(relativePath(base, "/pixel-campus-rpg/404")).toBe("/404");
   });
 });
+
+/**
+ * 應用程式內部的分頁切換（navigateToView）會用 pushState 改寫網址。
+ * 之前寫死成 "/" 與 "/#view"，在子路徑部署時會跳出應用程式目錄造成 404。
+ */
+const nextUrlFor = (baseUrl: string, view: string): string => {
+  const base = baseUrl || "/";
+  return view === "dashboard" ? base : `${base}#${view}`;
+};
+
+describe("in-app navigation under a subpath", () => {
+  const base = "/pixel-campus-rpg/";
+
+  it("keeps the dashboard inside the deployment directory", () => {
+    expect(nextUrlFor(base, "dashboard")).toBe("/pixel-campus-rpg/");
+  });
+
+  it("keeps every other view inside the deployment directory", () => {
+    for (const view of ["plan", "grades", "credits", "quest", "projects", "exams", "achievements", "badges"]) {
+      expect(nextUrlFor(base, view)).toBe(`/pixel-campus-rpg/#${view}`);
+    }
+  });
+
+  it("never navigates to the domain root when deployed under a subpath", () => {
+    expect(nextUrlFor(base, "dashboard")).not.toBe("/");
+    expect(nextUrlFor(base, "grades").startsWith(base)).toBe(true);
+  });
+
+  it("behaves exactly as before when deployed at the domain root", () => {
+    expect(nextUrlFor("/", "dashboard")).toBe("/");
+    expect(nextUrlFor("/", "grades")).toBe("/#grades");
+  });
+});

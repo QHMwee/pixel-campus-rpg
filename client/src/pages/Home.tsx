@@ -562,7 +562,7 @@ function PrivateQuestContent() {
           : "這個一次性匯入連結無法解讀或已不完整，因此沒有寫入任何成績資料。請重新取得完整連結後再試。");
         setActiveView("grades");
         setFragmentHash("#grades");
-        window.history.replaceState(null, "", "/#grades");
+        window.history.replaceState(null, "", `${import.meta.env.BASE_URL || "/"}#grades`);
         fragmentImportInFlight.current = false;
         return;
       }
@@ -583,7 +583,7 @@ function PrivateQuestContent() {
       }));
       setActiveView("grades");
       setFragmentHash("#grades");
-      window.history.replaceState(null, "", "/#grades");
+      window.history.replaceState(null, "", `${import.meta.env.BASE_URL || "/"}#grades`);
       fragmentImportInFlight.current = false;
     })();
   }, [fragmentHash]);
@@ -601,7 +601,7 @@ function PrivateQuestContent() {
           : "這個數字成績更新連結無法解讀或已不完整，因此沒有修改任何課程。請重新取得完整連結後再試。");
         setActiveView("grades");
         setFragmentHash("#grades");
-        window.history.replaceState(null, "", "/#grades");
+        window.history.replaceState(null, "", `${import.meta.env.BASE_URL || "/"}#grades`);
         fragmentImportInFlight.current = false;
         return;
       }
@@ -609,7 +609,7 @@ function PrivateQuestContent() {
       setFragmentImportError(`已處理 ${updates.length} 筆既有課程更新資料；系統只會套用符合原學期與課名的課程，可能補寫數字成績、調整學期或加入備註，未新增或刪除任何課程。`);
       setActiveView("grades");
       setFragmentHash("#grades");
-      window.history.replaceState(null, "", "/#grades");
+      window.history.replaceState(null, "", `${import.meta.env.BASE_URL || "/"}#grades`);
       fragmentImportInFlight.current = false;
     })();
   }, [fragmentHash]);
@@ -631,7 +631,11 @@ function PrivateQuestContent() {
 
   function navigateToView(view: View) {
     setActiveView(view);
-    const nextUrl = view === "dashboard" ? "/" : `/#${view}`;
+    // 部署在子路徑（GitHub Pages 的 /<repo>/）時，網址不能寫死成 "/"，
+    // 否則會跳出應用程式的目錄而變成 404。BASE_URL 由 Vite 依建置設定產生，
+    // 部署在根目錄時它就是 "/"，行為與原本相同。
+    const base = import.meta.env.BASE_URL || "/";
+    const nextUrl = view === "dashboard" ? base : `${base}#${view}`;
     if (`${window.location.pathname}${window.location.hash}` !== nextUrl) window.history.pushState(null, "", nextUrl);
   }
 
